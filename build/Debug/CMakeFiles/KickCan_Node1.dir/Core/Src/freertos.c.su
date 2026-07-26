@@ -1,0 +1,7 @@
+D:/STM32_project/KickCan_Node1/Core/Src/freertos.c:103:6:vApplicationGetIdleTaskMemory	24	static
+D:/STM32_project/KickCan_Node1/Core/Src/freertos.c:117:6:MX_FREERTOS_Init	160	static
+D:/STM32_project/KickCan_Node1/Core/Src/freertos.c:172:6:StartTaskTP	32	static
+D:/STM32_project/KickCan_Node1/Core/Src/freertos.c:194:6:StartTaskHC1	16	static
+D:/STM32_project/KickCan_Node1/Core/Src/freertos.c:217:6:StartTaskHC2	16	static
+D:/STM32_project/KickCan_Node1/Core/Src/freertos.c:240:6:StartTaskLD	32	static
+D:/STM32_project/KickCan_Node1/Core/Src/freertos.c:282:6:StartTaskCAN	96	static
