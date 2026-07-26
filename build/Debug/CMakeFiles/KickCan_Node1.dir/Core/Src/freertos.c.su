@@ -1,8 +1,9 @@
-D:/STM32_project/KickCan_Node1/Core/Src/freertos.c:242:6:vApplicationGetIdleTaskMemory	24	static
-D:/STM32_project/KickCan_Node1/Core/Src/freertos.c:256:6:MX_FREERTOS_Init	160	static
-D:/STM32_project/KickCan_Node1/Core/Src/freertos.c:311:6:StartTaskTP	32	static
-D:/STM32_project/KickCan_Node1/Core/Src/freertos.c:333:6:StartTaskHC1	16	static
-D:/STM32_project/KickCan_Node1/Core/Src/freertos.c:356:6:StartTaskHC2	16	static
-D:/STM32_project/KickCan_Node1/Core/Src/freertos.c:379:6:StartTaskLD	48	static
-D:/STM32_project/KickCan_Node1/Core/Src/freertos.c:701:6:StartTaskCAN	128	static
-D:/STM32_project/KickCan_Node1/Core/Src/freertos.c:832:21:GetLightLevel	16	static
+D:/STM32_project/KickCan_Node1/Core/Src/freertos.c:297:6:vApplicationGetIdleTaskMemory	24	static
+D:/STM32_project/KickCan_Node1/Core/Src/freertos.c:311:6:MX_FREERTOS_Init	160	static
+D:/STM32_project/KickCan_Node1/Core/Src/freertos.c:366:6:StartTaskTP	32	static
+D:/STM32_project/KickCan_Node1/Core/Src/freertos.c:388:6:StartTaskHC1	24	static
+D:/STM32_project/KickCan_Node1/Core/Src/freertos.c:586:6:StartTaskHC2	24	static
+D:/STM32_project/KickCan_Node1/Core/Src/freertos.c:761:6:StartTaskLD	48	static
+D:/STM32_project/KickCan_Node1/Core/Src/freertos.c:1083:6:StartTaskCAN	56	static
+D:/STM32_project/KickCan_Node1/Core/Src/freertos.c:1239:21:GetLightLevel	16	static
+D:/STM32_project/KickCan_Node1/Core/Src/freertos.c:1258:26:GetUltrasonicState	16	static

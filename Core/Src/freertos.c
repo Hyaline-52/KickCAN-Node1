@@ -91,6 +91,19 @@ typedef enum
 } LightState_t;
 
 
+/*
+ * 초음파 거리 경고 상태
+ */
+typedef enum
+{
+    ULTRASONIC_STATE_CLEAR = 0,   // 장애물 없음: 30cm 초과
+    ULTRASONIC_STATE_30CM,        // 21 ~ 30cm
+    ULTRASONIC_STATE_20CM,        // 11 ~ 20cm
+    ULTRASONIC_STATE_10CM         // 1 ~ 10cm
+
+} UltrasonicState_t;
+
+
 // 단일 센서 데이터 관리 구조체
 typedef struct
 {
@@ -170,6 +183,24 @@ typedef struct
 #define LIGHT_OFF_CONFIRM_COUNT              5U
 
 
+/*
+ * 초음파 거리 경고 기준값
+ */
+#define ULTRASONIC_WARNING_10CM       10U
+#define ULTRASONIC_WARNING_20CM       20U
+#define ULTRASONIC_WARNING_30CM       30U
+
+/*
+ * HC-SR04 측정값 유효 범위
+ *
+ * Distance 값이 0이면 아직 Echo가 측정되지 않았거나
+ * 측정에 실패한 것으로 판단한다.
+ */
+#define ULTRASONIC_MIN_VALID_CM         1U
+#define ULTRASONIC_MAX_VALID_CM       400U
+
+
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -210,6 +241,28 @@ volatile LightState_t g_light_state = LIGHT_STATE_OFF;
  */
 volatile Node1CanCommand_t g_light_can_command = CAN_CMD_NONE;
 
+/*
+ * 전방·후방 초음파 현재 상태
+ */
+volatile UltrasonicState_t g_front_ultrasonic_state =
+    ULTRASONIC_STATE_CLEAR;
+
+volatile UltrasonicState_t g_rear_ultrasonic_state =
+    ULTRASONIC_STATE_CLEAR;
+
+
+/*
+ * 초음파 Task에서 생성한 CAN 명령
+ *
+ * TaskHC1:
+ * 전방 명령 115, 116, 117, 121
+ *
+ * TaskHC2:
+ * 후방 명령 118, 119, 120, 122
+ */
+volatile Node1CanCommand_t g_front_can_command = CAN_CMD_NONE;
+volatile Node1CanCommand_t g_rear_can_command  = CAN_CMD_NONE;
+
 /* USER CODE END Variables */
 osThreadId TaskTPHandle;
 osThreadId TaskHC1Handle;
@@ -221,6 +274,8 @@ osThreadId TaskCANHandle;
 /* USER CODE BEGIN FunctionPrototypes */
 
 static LightLevel_t GetLightLevel(uint16_t adc_value);
+
+static UltrasonicState_t GetUltrasonicState(uint16_t distance_cm);
 
 /* USER CODE END FunctionPrototypes */
 
@@ -333,16 +388,191 @@ void StartTaskTP(void const * argument)
 void StartTaskHC1(void const * argument)
 {
   /* USER CODE BEGIN StartTaskHC1 */
-  for(;;)
-  {
-    // PC0: HC1 (전방) Trig 10us 펄스 발사
-    HAL_GPIO_WritePin(GPIOC, PC0_A5_HCTr1_Pin, GPIO_PIN_SET);
-    delay_us(10);
-    HAL_GPIO_WritePin(GPIOC, PC0_A5_HCTr1_Pin, GPIO_PIN_RESET);
 
-    // Echo 신호 수신 대기 및 측정 주기 관리
-    osDelay(230);
+  
+  /*
+   * 전방 초음파의 현재 판단 상태와 이전 상태
+   *
+   * 상태가 실제로 바뀌었을 때만
+   * 새로운 CAN 명령을 생성하기 위해 사용한다.
+   */
+  UltrasonicState_t current_front_state =
+      ULTRASONIC_STATE_CLEAR;
+
+  UltrasonicState_t previous_front_state =
+      ULTRASONIC_STATE_CLEAR;
+
+
+  /*
+   * 최초 유효 거리 측정 여부
+   *
+   * 시스템 시작 직후 Distance_Front가 0인 상태에서
+   * 장애물 경고가 발생하지 않도록 사용한다.
+   */
+  uint8_t first_valid_sample = 1;
+
+
+  for (;;)
+  {
+    /*
+     * 1. PC0: 전방 초음파 Trig 신호 발생
+     */
+    HAL_GPIO_WritePin(GPIOC,
+                      PC0_A5_HCTr1_Pin,
+                      GPIO_PIN_RESET);
+
+    delay_us(2);
+
+    HAL_GPIO_WritePin(GPIOC,
+                      PC0_A5_HCTr1_Pin,
+                      GPIO_PIN_SET);
+
+    delay_us(10);
+
+    HAL_GPIO_WritePin(GPIOC,
+                      PC0_A5_HCTr1_Pin,
+                      GPIO_PIN_RESET);
+
+
+    /*
+     * 2. Echo 인터럽트에서 계산된 전방 거리값 읽기
+     */
+    uint16_t front_distance = Distance_Front;
+
+
+    /*
+     * 3. 유효하지 않은 측정값 처리
+     *
+     * 0cm:
+     * 아직 측정되지 않았거나 Echo 측정 실패
+     *
+     * 400cm 초과:
+     * HC-SR04의 일반적인 유효 측정 범위를 벗어난 값
+     *
+     * 유효하지 않은 경우 기존 상태를 유지한다.
+     */
+    if ((front_distance < ULTRASONIC_MIN_VALID_CM) ||
+        (front_distance > ULTRASONIC_MAX_VALID_CM))
+    {
+      osDelay(120);
+      continue;
+    }
+
+
+    /*
+     * 4. 최초 유효 거리값으로 초기 상태 설정
+     */
+    if (first_valid_sample == 1)
+    {
+      current_front_state =
+          GetUltrasonicState(front_distance);
+
+      previous_front_state =
+          current_front_state;
+
+      g_front_ultrasonic_state =
+          current_front_state;
+
+
+      /*
+       * 시작 시 이미 장애물이 가까이 있는 경우에도
+       * 현재 거리 단계에 해당하는 명령을 생성한다.
+       */
+      switch (current_front_state)
+      {
+        case ULTRASONIC_STATE_10CM:
+          g_front_can_command =
+              CAN_CMD_FRONT_WARNING_10CM;
+          break;
+
+        case ULTRASONIC_STATE_20CM:
+          g_front_can_command =
+              CAN_CMD_FRONT_WARNING_20CM;
+          break;
+
+        case ULTRASONIC_STATE_30CM:
+          g_front_can_command =
+              CAN_CMD_FRONT_WARNING_30CM;
+          break;
+
+        case ULTRASONIC_STATE_CLEAR:
+        default:
+          g_front_can_command =
+              CAN_CMD_FRONT_CLEAR;
+          break;
+      }
+
+      first_valid_sample = 0;
+
+      osDelay(120);
+      continue;
+    }
+
+
+    /*
+     * 5. 현재 거리값을 경고 상태로 변환
+     */
+    current_front_state =
+        GetUltrasonicState(front_distance);
+
+
+    /*
+     * 6. 거리 상태가 바뀌었을 때만
+     *    전방 CAN 명령 생성
+     */
+    if (current_front_state != previous_front_state)
+    {
+      switch (current_front_state)
+      {
+        case ULTRASONIC_STATE_10CM:
+          g_front_can_command =
+              CAN_CMD_FRONT_WARNING_10CM;
+          break;
+
+        case ULTRASONIC_STATE_20CM:
+          g_front_can_command =
+              CAN_CMD_FRONT_WARNING_20CM;
+          break;
+
+        case ULTRASONIC_STATE_30CM:
+          g_front_can_command =
+              CAN_CMD_FRONT_WARNING_30CM;
+          break;
+
+        case ULTRASONIC_STATE_CLEAR:
+        default:
+          g_front_can_command =
+              CAN_CMD_FRONT_CLEAR;
+          break;
+      }
+
+
+      /*
+       * 외부 확인용 전방 상태 저장
+       */
+      g_front_ultrasonic_state =
+          current_front_state;
+
+
+      /*
+       * 다음 상태 비교를 위해 현재 상태 저장
+       */
+      previous_front_state =
+          current_front_state;
+    }
+
+
+    /*
+     * HC1 측정 주기
+     *
+     * HC2와 초음파 신호가 겹치는 것을 줄이기 위해
+     * 기존 230ms보다 짧은 120ms 주기를 사용하고,
+     * HC2는 시작 시 60ms 지연시킨다.
+     */
+    osDelay(120);
   }
+
+  
   /* USER CODE END StartTaskHC1 */
 }
 
@@ -356,16 +586,168 @@ void StartTaskHC1(void const * argument)
 void StartTaskHC2(void const * argument)
 {
   /* USER CODE BEGIN StartTaskHC2 */
-  for(;;)
-  {
-    // PC1: HC2 (후방) Trig 10us 펄스 발사
-    HAL_GPIO_WritePin(GPIOC, PC1_A4_HCTr2_Pin, GPIO_PIN_SET);
-    delay_us(10);
-    HAL_GPIO_WritePin(GPIOC, PC1_A4_HCTr2_Pin, GPIO_PIN_RESET);
 
-    // Echo 신호 수신 대기 및 측정 주기 관리
-    osDelay(230);
+  
+  UltrasonicState_t current_rear_state =
+      ULTRASONIC_STATE_CLEAR;
+
+  UltrasonicState_t previous_rear_state =
+      ULTRASONIC_STATE_CLEAR;
+
+  uint8_t first_valid_sample = 1;
+
+
+  /*
+   * HC1과 HC2가 동시에 Trig를 발생시키면
+   * 서로의 초음파 Echo를 잘못 수신할 수 있다.
+   *
+   * 따라서 HC2는 HC1보다 60ms 늦게 시작한다.
+   */
+  osDelay(60);
+
+
+  for (;;)
+  {
+    /*
+     * 1. PC1: 후방 초음파 Trig 신호 발생
+     */
+    HAL_GPIO_WritePin(GPIOC,
+                      PC1_A4_HCTr2_Pin,
+                      GPIO_PIN_RESET);
+
+    delay_us(2);
+
+    HAL_GPIO_WritePin(GPIOC,
+                      PC1_A4_HCTr2_Pin,
+                      GPIO_PIN_SET);
+
+    delay_us(10);
+
+    HAL_GPIO_WritePin(GPIOC,
+                      PC1_A4_HCTr2_Pin,
+                      GPIO_PIN_RESET);
+
+
+    /*
+     * 2. Echo 인터럽트에서 계산된 후방 거리값 읽기
+     */
+    uint16_t rear_distance = Distance_Back;
+
+
+    /*
+     * 3. 유효하지 않은 측정값은 기존 상태 유지
+     */
+    if ((rear_distance < ULTRASONIC_MIN_VALID_CM) ||
+        (rear_distance > ULTRASONIC_MAX_VALID_CM))
+    {
+      osDelay(120);
+      continue;
+    }
+
+
+    /*
+     * 4. 최초 유효 거리값으로 초기 상태 설정
+     */
+    if (first_valid_sample == 1)
+    {
+      current_rear_state =
+          GetUltrasonicState(rear_distance);
+
+      previous_rear_state =
+          current_rear_state;
+
+      g_rear_ultrasonic_state =
+          current_rear_state;
+
+
+      switch (current_rear_state)
+      {
+        case ULTRASONIC_STATE_10CM:
+          g_rear_can_command =
+              CAN_CMD_REAR_WARNING_10CM;
+          break;
+
+        case ULTRASONIC_STATE_20CM:
+          g_rear_can_command =
+              CAN_CMD_REAR_WARNING_20CM;
+          break;
+
+        case ULTRASONIC_STATE_30CM:
+          g_rear_can_command =
+              CAN_CMD_REAR_WARNING_30CM;
+          break;
+
+        case ULTRASONIC_STATE_CLEAR:
+        default:
+          g_rear_can_command =
+              CAN_CMD_REAR_CLEAR;
+          break;
+      }
+
+      first_valid_sample = 0;
+
+      osDelay(120);
+      continue;
+    }
+
+
+    /*
+     * 5. 현재 거리값을 후방 경고 상태로 변환
+     */
+    current_rear_state =
+        GetUltrasonicState(rear_distance);
+
+
+    /*
+     * 6. 후방 거리 상태가 바뀌었을 때만
+     *    CAN 명령 생성
+     */
+    if (current_rear_state != previous_rear_state)
+    {
+      switch (current_rear_state)
+      {
+        case ULTRASONIC_STATE_10CM:
+          g_rear_can_command =
+              CAN_CMD_REAR_WARNING_10CM;
+          break;
+
+        case ULTRASONIC_STATE_20CM:
+          g_rear_can_command =
+              CAN_CMD_REAR_WARNING_20CM;
+          break;
+
+        case ULTRASONIC_STATE_30CM:
+          g_rear_can_command =
+              CAN_CMD_REAR_WARNING_30CM;
+          break;
+
+        case ULTRASONIC_STATE_CLEAR:
+        default:
+          g_rear_can_command =
+              CAN_CMD_REAR_CLEAR;
+          break;
+      }
+
+
+      /*
+       * 외부 확인용 후방 상태 저장
+       */
+      g_rear_ultrasonic_state =
+          current_rear_state;
+
+
+      /*
+       * 다음 상태 비교를 위해 현재 상태 저장
+       */
+      previous_rear_state =
+          current_rear_state;
+    }
+
+
+    osDelay(120);
   }
+
+
   /* USER CODE END StartTaskHC2 */
 }
 
@@ -742,6 +1124,8 @@ void StartTaskCAN(void const * argument)
      * TaskCAN에서는 조도 조건을 다시 판단하지 않는다.
      */
     Node1CanCommand_t light_command = g_light_can_command;
+    Node1CanCommand_t front_command = g_front_can_command;
+    Node1CanCommand_t rear_command  = g_rear_can_command;
 
 
     /*
@@ -751,8 +1135,8 @@ void StartTaskCAN(void const * argument)
      * 조도 제어 명령을 저장한다.
      */
     txData[0] = (uint8_t)light_command;
-    txData[1] = 0;
-    txData[2] = 0;
+    txData[1] = (uint8_t)front_command;
+    txData[2] = (uint8_t)rear_command;
     txData[3] = 0;
     txData[4] = 0;
     txData[5] = 0;
@@ -766,42 +1150,65 @@ void StartTaskCAN(void const * argument)
      * TaskLD에서 계산된 센서값과
      * 실제 CAN으로 보낼 명령 및 데이터를 확인한다.
      */
+     /*
     printf("[CAN CHECK] "
-           "CMD=%3u | "
-           "TX=[%3u %3u %3u %3u %3u %3u %3u %3u] | "
-           "STATE=%u | "
-           "FW_RAW=%4u OH_RAW=%4u | "
-           "FW_FILT=%4u OH_FILT=%4u | "
-           "FW_DELTA=%5d OH_DELTA=%5d\r\n",
+          "LIGHT_CMD=%3u FRONT_CMD=%3u REAR_CMD=%3u | "
+          "TX=[%3u %3u %3u %3u %3u %3u %3u %3u] | "
+          "LIGHT_STATE=%u FRONT_STATE=%u REAR_STATE=%u | "
+          "DIST_F=%3ucm DIST_R=%3ucm | "
+          "FW_RAW=%4u OH_RAW=%4u | "
+          "FW_FILT=%4u OH_FILT=%4u | "
+          "FW_DELTA=%5d OH_DELTA=%5d\r\n",
 
-           /* TaskLD에서 생성한 CAN 명령 */
-           (unsigned int)light_command,
+          (unsigned int)light_command,
+          (unsigned int)front_command,
+          (unsigned int)rear_command,
 
-           /* 실제 CAN으로 보낼 데이터 */
-           (unsigned int)txData[0],
-           (unsigned int)txData[1],
-           (unsigned int)txData[2],
-           (unsigned int)txData[3],
-           (unsigned int)txData[4],
-           (unsigned int)txData[5],
-           (unsigned int)txData[6],
-           (unsigned int)txData[7],
+          (unsigned int)txData[0],
+          (unsigned int)txData[1],
+          (unsigned int)txData[2],
+          (unsigned int)txData[3],
+          (unsigned int)txData[4],
+          (unsigned int)txData[5],
+          (unsigned int)txData[6],
+          (unsigned int)txData[7],
 
-           /* TaskLD에서 판단한 라이트 상태 */
-           (unsigned int)g_light_state,
+          (unsigned int)g_light_state,
+          (unsigned int)g_front_ultrasonic_state,
+          (unsigned int)g_rear_ultrasonic_state,
 
-           /* TaskLD에서 수집한 조도센서값 */
-           (unsigned int)g_auto_light.forward.raw,
-           (unsigned int)g_auto_light.overhead.raw,
+          (unsigned int)Distance_Front,
+          (unsigned int)Distance_Back,
 
-           /* TaskLD에서 계산한 필터값 */
-           (unsigned int)g_auto_light.forward.filtered,
-           (unsigned int)g_auto_light.overhead.filtered,
+          (unsigned int)g_auto_light.forward.raw,
+          (unsigned int)g_auto_light.overhead.raw,
 
-           /* TaskLD에서 계산한 변화량 */
-           (int)g_auto_light.forward.delta,
-           (int)g_auto_light.overhead.delta);
+          (unsigned int)g_auto_light.forward.filtered,
+          (unsigned int)g_auto_light.overhead.filtered,
 
+          (int)g_auto_light.forward.delta,
+          (int)g_auto_light.overhead.delta);
+    */
+
+
+    /*
+    * 초음파 Task UART 확인용 임시 출력
+    *
+    * 전방·후방 거리값
+    * 거리 판단 상태
+    * 생성된 CAN 명령만 확인한다.
+    */
+    printf("[ULTRASONIC CHECK] "
+          "FRONT=%3ucm STATE=%u CMD=%3u | "
+          "REAR=%3ucm STATE=%u CMD=%3u\r\n",
+
+          (unsigned int)Distance_Front,
+          (unsigned int)g_front_ultrasonic_state,
+          (unsigned int)g_front_can_command,
+
+          (unsigned int)Distance_Back,
+          (unsigned int)g_rear_ultrasonic_state,
+          (unsigned int)g_rear_can_command);
 
     /*
      * 실제 CAN 모듈 연결 후 사용할 송신 코드
@@ -842,6 +1249,36 @@ static LightLevel_t GetLightLevel(uint16_t adc_value)
     else
     {
         return LIGHT_LEVEL_TRANSITION;
+    }
+}
+
+/*
+ * 초음파 거리값을 경고 단계로 변환하는 함수
+ */
+static UltrasonicState_t GetUltrasonicState(uint16_t distance_cm)
+{
+    /*
+     * 가까운 구간부터 검사해야 한다.
+     *
+     * 예:
+     * 8cm는 10cm, 20cm, 30cm 조건을 모두 만족하므로
+     * 가장 먼저 10cm 구간으로 분류한다.
+     */
+    if (distance_cm <= ULTRASONIC_WARNING_10CM)
+    {
+        return ULTRASONIC_STATE_10CM;
+    }
+    else if (distance_cm <= ULTRASONIC_WARNING_20CM)
+    {
+        return ULTRASONIC_STATE_20CM;
+    }
+    else if (distance_cm <= ULTRASONIC_WARNING_30CM)
+    {
+        return ULTRASONIC_STATE_30CM;
+    }
+    else
+    {
+        return ULTRASONIC_STATE_CLEAR;
     }
 }
 
