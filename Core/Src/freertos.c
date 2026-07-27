@@ -113,13 +113,25 @@ typedef struct
 
 } LightSensor_t;
 
+/*
+ * TMP36 온도센서 데이터 관리 구조체
+ */
+typedef struct
+{
+    uint16_t raw;             // ADC 원본값
+    uint16_t filtered_raw;    // 필터 적용 ADC값
+    float voltage;            // 변환 전압
+    float temperature;        // 계산된 온도(℃)
+
+} TemperatureSensor_t;
+
 
 // 전체 오토라이트 & TP 시스템 구조체
 typedef struct
 {
     LightSensor_t forward;  // LS1 (PA0)
     LightSensor_t overhead; // LS2 (PA1)
-    LightSensor_t tp;       // TP  (PA4)
+    TemperatureSensor_t tp;      // TMP36 (PA4)
 
 } AutoLight_t;
 
@@ -127,6 +139,34 @@ typedef struct
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+
+/*
+ * TMP36 온도 경고 기준값
+ *
+ * 테스트 단계:
+ * 37도 이상 → 온도 경고 명령 110
+ *
+ * 최종 동작:
+ * 50도 이상 → 온도 경고 명령 110
+ *
+ * 경고 해제:
+ * 30도 이하 → 정상 복귀 명령 111
+ */
+#define TEMP_WARNING_THRESHOLD_TEST       37.0f
+#define TEMP_WARNING_THRESHOLD_FINAL      50.0f
+#define TEMP_NORMAL_THRESHOLD             30.0f
+
+
+/*
+ * 현재는 손으로 센서를 가열하여 동작을 확인해야 하므로
+ * 테스트 기준값 37도를 사용한다.
+ *
+ * 최종 테스트가 끝난 뒤 아래 값을
+ * TEMP_WARNING_THRESHOLD_FINAL로 변경한다.
+ */
+#define TEMP_WARNING_THRESHOLD \
+        TEMP_WARNING_THRESHOLD_TEST
+        // TEMP_WARNING_THRESHOLD_FINAL
 
 
 /*
@@ -223,6 +263,30 @@ uint16_t adc_dma_buff[3] = {0, };
 
 // 전체 센서값 관리 구조체
 AutoLight_t g_auto_light;
+
+/*
+ * 현재 온도 경고 상태
+ */
+typedef enum
+{
+    TEMP_STATE_NORMAL = 0,    // 정상 상태
+    TEMP_STATE_WARNING        // 고온 경고 상태
+
+} TemperatureState_t;
+
+/*
+ * TaskTP에서 판단한 현재 온도 상태
+ */
+volatile TemperatureState_t g_temperature_state = TEMP_STATE_NORMAL;
+
+
+/*
+ * TaskTP에서 생성한 온도 CAN 명령
+ *
+ * 110: 온도 경고
+ * 111: 온도 정상 복귀
+ */
+volatile Node1CanCommand_t g_temperature_can_command = CAN_CMD_NONE;
 
 
 /*
@@ -366,15 +430,188 @@ void MX_FREERTOS_Init(void) {
 void StartTaskTP(void const * argument)
 {
   /* USER CODE BEGIN StartTaskTP */
-  for(;;)
-  {
-    // PA4 (TMP36 온도센서) 수집 처리
-    uint16_t raw_tp = adc_dma_buff[2];
-    g_auto_light.tp.raw = raw_tp;
-    g_auto_light.tp.filtered = (uint16_t)(0.2f * raw_tp + 0.8f * g_auto_light.tp.filtered);
 
+
+  /*
+   * 현재 온도 상태와 이전 온도 상태
+   *
+   * 상태가 실제로 바뀌었을 때만
+   * 새로운 CAN 명령을 생성하기 위해 사용한다.
+   */
+  TemperatureState_t current_temperature_state =
+      TEMP_STATE_NORMAL;
+
+  TemperatureState_t previous_temperature_state =
+      TEMP_STATE_NORMAL;
+
+
+  /*
+   * 최초 ADC 측정 여부
+   *
+   * filtered_raw가 0인 상태에서 바로 필터를 적용하면
+   * 실제 ADC값보다 낮은 값에서 천천히 상승하므로,
+   * 최초 측정값을 필터 초기값으로 사용한다.
+   */
+  uint8_t first_sample = 1;
+
+
+  for (;;)
+  {
+    /*
+     * 1. DMA 버퍼에서 TMP36 ADC값 읽기
+     *
+     * adc_dma_buff[2]:
+     * ADC1_IN4, PA4에 연결된 TMP36
+     */
+    uint16_t raw_tp = adc_dma_buff[2];
+
+
+    /*
+     * 2. 최초 측정값 초기화
+     */
+    if (first_sample == 1)
+    {
+      g_auto_light.tp.raw = raw_tp;
+      g_auto_light.tp.filtered_raw = raw_tp;
+
+      first_sample = 0;
+    }
+    else
+    {
+      /*
+       * 3. 현재 ADC 원본값 저장
+       */
+      g_auto_light.tp.raw = raw_tp;
+
+
+      /*
+       * 4. Low-Pass Filter 적용
+       *
+       * 현재 ADC값 20%
+       * 이전 필터값 80%
+       */
+      g_auto_light.tp.filtered_raw =
+          (uint16_t)((0.2f * (float)raw_tp) +
+                     (0.8f *
+                      (float)g_auto_light.tp.filtered_raw));
+    }
+
+
+    /*
+     * 5. ADC값을 전압으로 변환
+     *
+     * STM32 ADC:
+     * 12bit → 0~4095
+     * 기준전압 → 3.3V
+     */
+    g_auto_light.tp.voltage =
+        ((float)g_auto_light.tp.filtered_raw * 3.3f) /
+        4095.0f;
+
+
+    /*
+     * 6. TMP36 출력전압을 온도로 변환
+     *
+     * TMP36:
+     * 0℃에서 약 0.5V
+     * 1℃당 약 10mV 증가
+     *
+     * Temperature = (Voltage - 0.5) × 100
+     */
+    g_auto_light.tp.temperature =
+        (g_auto_light.tp.voltage - 0.5f) * 100.0f;
+
+
+    /*
+     * 7. 온도 상태 판단
+     *
+     * 정상 상태에서 설정 기준 이상이 되면 경고 상태로 전환한다.
+     *
+     * 현재 테스트 기준:
+     * 37℃ 이상 → 경고
+     *
+     * 최종 기준:
+     * 50℃ 이상 → 경고
+     */
+    if ((current_temperature_state == TEMP_STATE_NORMAL) &&
+        (g_auto_light.tp.temperature >=
+         TEMP_WARNING_THRESHOLD))
+    {
+      current_temperature_state =
+          TEMP_STATE_WARNING;
+    }
+
+
+    /*
+     * 경고 상태에서는 온도가 30℃ 이하로 내려가야
+     * 정상 상태로 복귀한다.
+     *
+     * 경고 진입 온도와 해제 온도를 다르게 두어
+     * 경계 온도에서 명령이 반복되는 것을 방지한다.
+     */
+    else if ((current_temperature_state == TEMP_STATE_WARNING) &&
+             (g_auto_light.tp.temperature <=
+              TEMP_NORMAL_THRESHOLD))
+    {
+      current_temperature_state =
+          TEMP_STATE_NORMAL;
+    }
+
+
+    /*
+     * 8. 온도 상태가 바뀌었을 때만
+     *    CAN 명령을 생성한다.
+     *
+     * 여기서는 실제 CAN 송신을 하지 않는다.
+     */
+    if (current_temperature_state !=
+        previous_temperature_state)
+    {
+      switch (current_temperature_state)
+      {
+        case TEMP_STATE_WARNING:
+
+          /*
+           * 온도 경고 명령 110
+           */
+          g_temperature_can_command =
+              CAN_CMD_TEMP_WARNING;
+          break;
+
+
+        case TEMP_STATE_NORMAL:
+        default:
+
+          /*
+           * 온도 정상 복귀 명령 111
+           */
+          g_temperature_can_command =
+              CAN_CMD_TEMP_NORMAL;
+          break;
+      }
+
+
+      /*
+       * 외부 확인용 현재 온도 상태 저장
+       */
+      g_temperature_state =
+          current_temperature_state;
+
+
+      /*
+       * 다음 상태 비교를 위해 현재 상태 저장
+       */
+      previous_temperature_state =
+          current_temperature_state;
+    }
+
+
+    /*
+     * 온도 측정 주기: 100ms
+     */
     osDelay(100);
   }
+
   /* USER CODE END StartTaskTP */
 }
 
@@ -865,7 +1102,7 @@ void StartTaskLD(void const * argument)
         (uint16_t)((0.2f * (float)raw_fw) +
                    (0.8f * (float)g_auto_light.forward.filtered));
 
-    g_auto_light.overhead.filtered =
+    g_auto_light.overhead.filtered =           
         (uint16_t)((0.2f * (float)raw_oh) +
                    (0.8f * (float)g_auto_light.overhead.filtered));
 
@@ -1127,6 +1364,14 @@ void StartTaskCAN(void const * argument)
     Node1CanCommand_t front_command = g_front_can_command;
     Node1CanCommand_t rear_command  = g_rear_can_command;
 
+    Node1CanCommand_t temperature_command = g_temperature_can_command;
+
+    Node1CanCommand_t light_command = g_light_can_command;
+
+    Node1CanCommand_t front_command = g_front_can_command;
+
+    Node1CanCommand_t rear_command = g_rear_can_command;
+
 
     /*
      * 실제 CAN 데이터 패킷 구성
@@ -1134,10 +1379,10 @@ void StartTaskCAN(void const * argument)
      * 현재는 첫 번째 바이트에
      * 조도 제어 명령을 저장한다.
      */
-    txData[0] = (uint8_t)light_command;
-    txData[1] = (uint8_t)front_command;
-    txData[2] = (uint8_t)rear_command;
-    txData[3] = 0;
+    txData[0] = (uint8_t)temperature_command;
+    txData[1] = (uint8_t)light_command;
+    txData[2] = (uint8_t)front_command;
+    txData[3] = (uint8_t)rear_command;
     txData[4] = 0;
     txData[5] = 0;
     txData[6] = 0;
@@ -1198,17 +1443,17 @@ void StartTaskCAN(void const * argument)
     * 거리 판단 상태
     * 생성된 CAN 명령만 확인한다.
     */
-    printf("[ULTRASONIC CHECK] "
-          "FRONT=%3ucm STATE=%u CMD=%3u | "
-          "REAR=%3ucm STATE=%u CMD=%3u\r\n",
+    // printf("[ULTRASONIC CHECK] "
+    //       "FRONT=%3ucm STATE=%u CMD=%3u | "
+    //       "REAR=%3ucm STATE=%u CMD=%3u\r\n",
 
-          (unsigned int)Distance_Front,
-          (unsigned int)g_front_ultrasonic_state,
-          (unsigned int)g_front_can_command,
+    //       (unsigned int)Distance_Front,
+    //       (unsigned int)g_front_ultrasonic_state,
+    //       (unsigned int)g_front_can_command,
 
-          (unsigned int)Distance_Back,
-          (unsigned int)g_rear_ultrasonic_state,
-          (unsigned int)g_rear_can_command);
+    //       (unsigned int)Distance_Back,
+    //       (unsigned int)g_rear_ultrasonic_state,
+    //       (unsigned int)g_rear_can_command);
 
     /*
      * 실제 CAN 모듈 연결 후 사용할 송신 코드
@@ -1222,6 +1467,30 @@ void StartTaskCAN(void const * argument)
                            &txMailbox);
     }
     */
+
+    /*
+    * TMP36 온도센서 UART 확인
+    *
+    * 모든 온도 계산은 TaskTP에서 수행하고,
+    * TaskCAN에서는 결과만 출력한다.
+    */
+    printf("[TEMP CHECK] "
+          "RAW=%4u FILT=%4u | "
+          "VOLT=%.3fV TEMP=%.1f degC | "
+          "STATE=%u CMD=%3u | "
+          "WARN=%.1f degC NORMAL=%.1f degC\r\n",
+
+          (unsigned int)g_auto_light.tp.raw,
+          (unsigned int)g_auto_light.tp.filtered_raw,
+
+          (double)g_auto_light.tp.voltage,
+          (double)g_auto_light.tp.temperature,
+
+          (unsigned int)g_temperature_state,
+          (unsigned int)temperature_command,
+
+          (double)TEMP_WARNING_THRESHOLD,
+          (double)TEMP_NORMAL_THRESHOLD);
 
 
     osDelay(500);
