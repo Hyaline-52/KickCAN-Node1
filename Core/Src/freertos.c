@@ -333,6 +333,7 @@ osThreadId TaskHC1Handle;
 osThreadId TaskHC2Handle;
 osThreadId TaskLDHandle;
 osThreadId TaskCANHandle;
+osMessageQId QueueCANHandle;
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -389,6 +390,11 @@ void MX_FREERTOS_Init(void) {
   /* start timers, add new ones, ... */
   /* USER CODE END RTOS_TIMERS */
 
+  /* Create the queue(s) */
+  /* definition and creation of QueueCAN */
+  osMessageQDef(QueueCAN, 16, uint32_t);
+  QueueCANHandle = osMessageCreate(osMessageQ(QueueCAN), NULL);
+
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
   /* USER CODE END RTOS_QUEUES */
@@ -411,7 +417,7 @@ void MX_FREERTOS_Init(void) {
   TaskLDHandle = osThreadCreate(osThread(TaskLD), NULL);
 
   /* definition and creation of TaskCAN */
-  osThreadDef(TaskCAN, StartTaskCAN, osPriorityAboveNormal, 0, 512);
+  osThreadDef(TaskCAN, StartTaskCAN, osPriorityAboveNormal, 0, 128);
   TaskCANHandle = osThreadCreate(osThread(TaskCAN), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
