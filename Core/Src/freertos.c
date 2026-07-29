@@ -1064,14 +1064,41 @@ void StartTaskHC2(void const * argument)
 {
   /* USER CODE BEGIN StartTaskHC2 */
 
-  
-  UltrasonicState_t current_rear_state =
-      ULTRASONIC_STATE_CLEAR;
 
-  UltrasonicState_t previous_rear_state =
-      ULTRASONIC_STATE_CLEAR;
+  /*
+   * 현재 측정된 후방 초음파 상태
+   */
+  UltrasonicState_t current_rear_state = ULTRASONIC_STATE_CLEAR;
 
-  uint8_t first_valid_sample = 1;
+
+  /*
+   * 이전 측정 주기의 후방 초음파 상태
+   *
+   * 후진 상태를 유지하는 동안
+   * 거리 단계가 실제로 변경되었는지 확인하기 위해 사용한다.
+   */
+  UltrasonicState_t previous_rear_state = ULTRASONIC_STATE_CLEAR;
+
+
+  /*
+   * TaskHC2가 마지막으로 확인한 주행 상태
+   *
+   * Main Node에서 받은 주행 상태가
+   * 정지 또는 전진에서 후진으로 변경되었는지
+   * 확인하기 위해 사용한다.
+   *
+   * 시스템 초기 상태는 정지로 설정한다.
+   */
+  DriveState_t previous_drive_state = DRIVE_STATE_STOP;
+
+
+  /*
+   * 최초 유효 거리 측정 여부
+   *
+   * 시스템 시작 직후 Distance_Back이 0인 상태를
+   * 실제 거리 상태로 사용하지 않기 위해 사용한다.
+   */
+  uint8_t first_valid_sample = 1U;
 
 
   /*
@@ -1086,7 +1113,10 @@ void StartTaskHC2(void const * argument)
   for (;;)
   {
     /*
-     * 1. PC1: 후방 초음파 Trig 신호 발생
+     * 1. 후방 초음파 Trig 신호 발생
+     *
+     * PC1:
+     * 후방 HC-SR04의 Trig 출력
      */
     HAL_GPIO_WritePin(GPIOC,
                       PC1_A4_HCTr2_Pin,
@@ -1106,13 +1136,40 @@ void StartTaskHC2(void const * argument)
 
 
     /*
-     * 2. Echo 인터럽트에서 계산된 후방 거리값 읽기
+     * 2. Echo 인터럽트에서 계산된
+     *    후방 거리값을 읽는다.
      */
     uint16_t rear_distance = Distance_Back;
 
 
     /*
-     * 3. 유효하지 않은 측정값은 기존 상태 유지
+     * 3. Main Node에서 수신한 현재 주행 상태를 읽는다.
+     *
+     * 이 값은 Node_1이 다시 송신하지 않는다.
+     * 후방 초음파 Event의 송신 여부를
+     * 결정하는 조건값으로만 사용한다.
+     */
+    DriveState_t current_drive_state = g_drive_state;
+
+
+    /*
+     * 4. 후방 거리값의 유효 범위를 확인한다.
+     *
+     * 0cm:
+     * 아직 측정되지 않았거나 Echo 측정 실패
+     *
+     * 400cm 초과:
+     * HC-SR04의 일반적인 측정 범위를 벗어난 값
+     *
+     * 유효하지 않은 경우:
+     * - 기존 거리 상태 유지
+     * - 후방 Event 생성 안 함
+     * - 이전 주행 상태도 갱신하지 않음
+     *
+     * 이전 주행 상태를 갱신하지 않는 이유:
+     * 후진 상태로 변경된 순간 거리 측정이 실패하더라도,
+     * 다음 유효 거리 측정 시 현재 후방 Event를
+     * 한 번 송신하기 위해서다.
      */
     if ((rear_distance < ULTRASONIC_MIN_VALID_CM) ||
         (rear_distance > ULTRASONIC_MAX_VALID_CM))
@@ -1123,104 +1180,212 @@ void StartTaskHC2(void const * argument)
 
 
     /*
-     * 4. 최초 유효 거리값으로 초기 상태 설정
+     * 5. 현재 거리값을 후방 경고 단계로 변환한다.
+     *
+     * CLEAR : 30cm 초과
+     * 30CM  : 21~30cm
+     * 20CM  : 11~20cm
+     * 10CM  : 1~10cm
      */
-    if (first_valid_sample == 1)
+    current_rear_state = GetUltrasonicState(rear_distance);
+
+
+    /*
+     * 이번 측정에서 후방 거리 단계가
+     * 실제로 변경되었는지 저장한다.
+     */
+    uint8_t rear_state_changed = 0U;
+
+
+    /*
+     * 6. 최초 유효 거리값 처리
+     *
+     * 최초 유효 측정값을 현재 상태와
+     * 이전 비교 상태로 함께 저장한다.
+     */
+    if (first_valid_sample == 1U)
     {
-      current_rear_state =
-          GetUltrasonicState(rear_distance);
+      previous_rear_state = current_rear_state;
 
-      previous_rear_state =
-          current_rear_state;
-
-      g_rear_ultrasonic_state =
-          current_rear_state;
-
-
-      switch (current_rear_state)
-      {
-        case ULTRASONIC_STATE_10CM:
-          g_rear_can_command =
-              CAN_CMD_REAR_WARNING_10CM;
-          break;
-
-        case ULTRASONIC_STATE_20CM:
-          g_rear_can_command =
-              CAN_CMD_REAR_WARNING_20CM;
-          break;
-
-        case ULTRASONIC_STATE_30CM:
-          g_rear_can_command =
-              CAN_CMD_REAR_WARNING_30CM;
-          break;
-
-        case ULTRASONIC_STATE_CLEAR:
-        default:
-          g_rear_can_command =
-              CAN_CMD_REAR_CLEAR;
-          break;
-      }
-
-      first_valid_sample = 0;
-
-      osDelay(120);
-      continue;
+      first_valid_sample = 0U;
     }
 
 
     /*
-     * 5. 현재 거리값을 후방 경고 상태로 변환
+     * 최초 측정 이후에는 현재 상태와 이전 상태를 비교한다.
      */
-    current_rear_state =
-        GetUltrasonicState(rear_distance);
+    else if (current_rear_state != previous_rear_state)
+    {
+      rear_state_changed = 1U;
+
+
+      /*
+       * 다음 거리 상태 비교를 위해
+       * 현재 상태를 이전 상태로 저장한다.
+       */
+      previous_rear_state = current_rear_state;
+    }
 
 
     /*
-     * 6. 후방 거리 상태가 바뀌었을 때만
-     *    CAN 명령 생성
+     * 외부 확인용 현재 후방 초음파 상태 저장
+     *
+     * 주행 상태와 관계없이 항상 최신 상태를 저장한다.
      */
-    if (current_rear_state != previous_rear_state)
+    g_rear_ultrasonic_state = current_rear_state;
+
+
+    /*
+     * 7. 후진 상태로 새롭게 진입했는지 확인한다.
+     *
+     * 정지 → 후진
+     * 전진 → 후진
+     *
+     * 두 경우 모두 현재 후방 거리 상태에 해당하는
+     * Event를 한 번 송신해야 한다.
+     */
+    uint8_t entered_backward = 0U;
+
+    if ((current_drive_state == DRIVE_STATE_BACKWARD) &&
+        (previous_drive_state != DRIVE_STATE_BACKWARD))
     {
+      entered_backward = 1U;
+    }
+
+
+    /*
+     * 8. 후방 초음파 Event 송신 조건
+     *
+     * 현재 주행 상태가 후진이면서 다음 중 하나를 만족:
+     *
+     * 1) 정지 또는 전진에서 후진으로 변경됨
+     * 2) 후진을 유지하는 동안 후방 거리 단계가 변경됨
+     *
+     * 전진 또는 정지 상태에서는
+     * 후방 초음파 Event를 큐에 등록하지 않는다.
+     */
+    if ((current_drive_state == DRIVE_STATE_BACKWARD) &&
+        ((entered_backward == 1U) ||
+         (rear_state_changed == 1U)))
+    {
+      /*
+       * TaskCAN으로 전달할 CAN 송신 요청
+       *
+       * 센서 Task에서는:
+       * - 수신 노드 ID
+       * - Command
+       * - Value
+       *
+       * 만 설정한다.
+       *
+       * 실제 CAN Header 구성과 Payload 패킹은
+       * TaskCAN에서 수행한다.
+       */
+      CanTxMessage_t rear_message;
+
+
+      /*
+       * 후방 초음파 Event의 목적지는
+       * Node_2(ID 3)이다.
+       */
+      rear_message.destination_id = CAN_NODE2_ID;
+
+
+      /*
+       * 현재 후방 거리 상태에 따라
+       * Command와 Value를 결정한다.
+       */
       switch (current_rear_state)
       {
         case ULTRASONIC_STATE_10CM:
-          g_rear_can_command =
-              CAN_CMD_REAR_WARNING_10CM;
+
+          /*
+           * 후방 10cm 경고
+           *
+           * Command = 120
+           * Value   = 3
+           */
+          rear_message.command = (uint8_t)CAN_CMD_REAR_WARNING_10CM;
+
+          rear_message.value = 3U;
           break;
+
 
         case ULTRASONIC_STATE_20CM:
-          g_rear_can_command =
-              CAN_CMD_REAR_WARNING_20CM;
+
+          /*
+           * 후방 20cm 경고
+           *
+           * Command = 119
+           * Value   = 2
+           */
+          rear_message.command = (uint8_t)CAN_CMD_REAR_WARNING_20CM;
+
+          rear_message.value = 2U;
           break;
 
+
         case ULTRASONIC_STATE_30CM:
-          g_rear_can_command =
-              CAN_CMD_REAR_WARNING_30CM;
+
+          /*
+           * 후방 30cm 경고
+           *
+           * Command = 118
+           * Value   = 1
+           */
+          rear_message.command = (uint8_t)CAN_CMD_REAR_WARNING_30CM;
+
+          rear_message.value = 1U;
           break;
+
 
         case ULTRASONIC_STATE_CLEAR:
         default:
-          g_rear_can_command =
-              CAN_CMD_REAR_CLEAR;
+
+          /*
+           * 후방 경고 해제
+           *
+           * Command = 122
+           * Value   = 0
+           */
+          rear_message.command = (uint8_t)CAN_CMD_REAR_CLEAR;
+
+          rear_message.value = 0U;
           break;
       }
 
 
       /*
-       * 외부 확인용 후방 상태 저장
+       * CAN 송신 요청을 QueueCAN에 등록한다.
+       *
+       * 실제 CAN 송신은 이 Task에서 수행하지 않는다.
+       * TaskCAN이 큐에서 메시지를 꺼내 송신한다.
+       *
+       * 큐가 가득 찬 경우에는
+       * 공간이 생길 때까지 대기한다.
        */
-      g_rear_ultrasonic_state =
-          current_rear_state;
-
-
-      /*
-       * 다음 상태 비교를 위해 현재 상태 저장
-       */
-      previous_rear_state =
-          current_rear_state;
+      xQueueSend(QueueCANHandle,
+                 &rear_message,
+                 portMAX_DELAY);
     }
 
 
+    /*
+     * 9. 다음 주기의 주행 상태 비교를 위해
+     *    현재 주행 상태를 저장한다.
+     *
+     * 후진에서 정지 또는 전진으로 변경되는 경우에는
+     * 별도의 후방 경고 해제 Event를 송신하지 않는다.
+     *
+     * Node_2는 Main Node에서 현재 주행 상태를
+     * 별도로 수신해서 처리한다.
+     */
+    previous_drive_state = current_drive_state;
+
+
+    /*
+     * 후방 초음파 측정 주기
+     */
     osDelay(120);
   }
 
