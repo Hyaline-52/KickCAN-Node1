@@ -540,11 +540,9 @@ void StartTaskTP(void const * argument)
    * 상태가 실제로 바뀌었을 때만
    * 새로운 CAN 명령을 생성하기 위해 사용한다.
    */
-  TemperatureState_t current_temperature_state =
-      TEMP_STATE_NORMAL;
+  TemperatureState_t current_temperature_state = TEMP_STATE_NORMAL;
 
-  TemperatureState_t previous_temperature_state =
-      TEMP_STATE_NORMAL;
+  TemperatureState_t previous_temperature_state = TEMP_STATE_NORMAL;
 
 
   /*
@@ -594,8 +592,7 @@ void StartTaskTP(void const * argument)
        */
       g_auto_light.tp.filtered_raw =
           (uint16_t)((0.2f * (float)raw_tp) +
-                     (0.8f *
-                      (float)g_auto_light.tp.filtered_raw));
+                     (0.8f * (float)g_auto_light.tp.filtered_raw));
     }
 
 
@@ -606,9 +603,7 @@ void StartTaskTP(void const * argument)
      * 12bit → 0~4095
      * 기준전압 → 3.3V
      */
-    g_auto_light.tp.voltage =
-        ((float)g_auto_light.tp.filtered_raw * 3.3f) /
-        4095.0f;
+    g_auto_light.tp.voltage = ((float)g_auto_light.tp.filtered_raw * 3.3f) / 4095.0f;
 
 
     /*
@@ -620,8 +615,7 @@ void StartTaskTP(void const * argument)
      *
      * Temperature = (Voltage - 0.5) × 100
      */
-    g_auto_light.tp.temperature =
-        (g_auto_light.tp.voltage - 0.5f) * 100.0f;
+    g_auto_light.tp.temperature = (g_auto_light.tp.voltage - 0.5f) * 100.0f;
 
 
     /*
@@ -639,8 +633,7 @@ void StartTaskTP(void const * argument)
         (g_auto_light.tp.temperature >=
          TEMP_WARNING_THRESHOLD))
     {
-      current_temperature_state =
-          TEMP_STATE_WARNING;
+      current_temperature_state = TEMP_STATE_WARNING;
     }
 
 
@@ -655,29 +648,64 @@ void StartTaskTP(void const * argument)
              (g_auto_light.tp.temperature <=
               TEMP_NORMAL_THRESHOLD))
     {
-      current_temperature_state =
-          TEMP_STATE_NORMAL;
+      current_temperature_state = TEMP_STATE_NORMAL;
     }
 
 
     /*
-     * 8. 온도 상태가 바뀌었을 때만
-     *    CAN 명령을 생성한다.
-     *
-     * 여기서는 실제 CAN 송신을 하지 않는다.
-     */
-    if (current_temperature_state !=
-        previous_temperature_state)
+    * 8. 온도 상태가 바뀌었을 때만
+    *    온도 Event를 QueueCAN에 등록한다.
+    *
+    * TaskTP에서는 실제 CAN 송신을 하지 않는다.
+    *
+    * 이 Task에서는:
+    * - 수신 노드 ID
+    * - Command
+    * - Value
+    *
+    * 만 설정한다.
+    *
+    * CAN Header 구성, Payload 패킹 및 실제 송신은
+    * TaskCAN에서만 수행한다.
+    */
+    if (current_temperature_state != previous_temperature_state)
     {
+      /*
+      * TaskCAN으로 전달할 온도 Event 메시지
+      */
+      CanTxMessage_t temperature_message;
+
+
+      /*
+      * Node_1의 온도 Event는
+      * Node_2(ID 3)로 전송한다.
+      *
+      * TaskCAN에서는 이 값을
+      * CAN Header의 Standard Identifier로 사용한다.
+      */
+      temperature_message.destination_id = CAN_NODE2_ID;
+
+
+      /*
+      * 현재 온도 상태에 따라
+      * Command와 Value를 설정한다.
+      */
       switch (current_temperature_state)
       {
         case TEMP_STATE_WARNING:
 
           /*
-           * 온도 경고 명령 110
-           */
-          g_temperature_can_command =
-              CAN_CMD_TEMP_WARNING;
+          * 온도 경고 Event
+          *
+          * Command = 110
+          * Value   = 1
+          *
+          * 최종 Payload:
+          * [6E 01 00 00 00 00 00 00]
+          */
+          temperature_message.command = (uint8_t)CAN_CMD_TEMP_WARNING;
+
+          temperature_message.value = 1U;
           break;
 
 
@@ -685,26 +713,50 @@ void StartTaskTP(void const * argument)
         default:
 
           /*
-           * 온도 정상 복귀 명령 111
-           */
-          g_temperature_can_command =
-              CAN_CMD_TEMP_NORMAL;
+          * 온도 정상 복귀 Event
+          *
+          * Command = 111
+          * Value   = 0
+          *
+          * 최종 Payload:
+          * [6F 00 00 00 00 00 00 00]
+          */
+          temperature_message.command = (uint8_t)CAN_CMD_TEMP_NORMAL;
+
+          temperature_message.value = 0U;
           break;
       }
 
 
       /*
-       * 외부 확인용 현재 온도 상태 저장
-       */
-      g_temperature_state =
-          current_temperature_state;
+      * 온도 Event를 CAN 송신 큐에 등록한다.
+      *
+      * 여기에서는 CAN 송신을 직접 수행하지 않는다.
+      * TaskCAN이 큐에서 이 메시지를 꺼내 송신한다.
+      *
+      * 큐가 가득 찬 경우에는
+      * 공간이 생길 때까지 대기한다.
+      */
+      xQueueSend(QueueCANHandle,
+                &temperature_message,
+                portMAX_DELAY);
 
 
       /*
-       * 다음 상태 비교를 위해 현재 상태 저장
-       */
-      previous_temperature_state =
-          current_temperature_state;
+      * 외부 확인용 현재 온도 상태 저장
+      *
+      * 이 변수는 UART 확인용으로 유지한다.
+      */
+      g_temperature_state = current_temperature_state;
+
+
+      /*
+      * 다음 상태 비교를 위해 현재 상태 저장
+      *
+      * 상태가 실제로 바뀌었을 때만
+      * 다음 온도 Event가 발생하도록 한다.
+      */
+      previous_temperature_state = current_temperature_state;
     }
 
 
