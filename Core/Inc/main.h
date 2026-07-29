@@ -132,6 +132,30 @@ void Error_Handler(void);
 
 /* USER CODE BEGIN Private defines */
 
+
+/*
+ * CAN 고정 데이터 송수신 테스트 모드
+ *
+ * 1U: 센서 Event 대신 고정 테스트 프레임 송신
+ * 0U: 기존 센서 Queue 기반 CAN 송신
+ */
+#define CAN_TEST_MODE              1U
+
+/*
+ * Main Node가 송신하는 테스트 메시지 ID
+ *
+ * Node_1에서는 이 ID의 프레임을 수신하여
+ * 디버거로 확인한다.
+ */
+#define CAN_TEST_MAIN_TX_ID        0x200U
+
+/*
+ * Node_1이 송신하는 테스트 메시지 ID
+ *
+ * Main Node에서는 이 ID의 프레임을 수신한다.
+ */
+#define CAN_TEST_NODE1_TX_ID       0x100U
+
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

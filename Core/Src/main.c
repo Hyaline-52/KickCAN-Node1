@@ -69,6 +69,38 @@
 
 /* USER CODE BEGIN PV */
 
+/*
+ * CAN 테스트 수신 결과
+ *
+ * UART를 사용하지 않고 STM32CubeIDE의
+ * Expressions 또는 Live Expressions에서 확인한다.
+ */
+volatile uint32_t g_can_test_rx_id = 0U;
+volatile uint32_t g_can_test_rx_dlc = 0U;
+volatile uint32_t g_can_test_rx_ide = 0U;
+volatile uint32_t g_can_test_rx_rtr = 0U;
+
+volatile uint8_t g_can_test_rx_data[8] =
+{
+  0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U
+};
+
+/*
+ * 모든 CAN 프레임 수신 횟수
+ */
+volatile uint32_t g_can_test_rx_count = 0U;
+
+/*
+ * Main의 테스트 ID 0x200 수신 횟수
+ */
+volatile uint32_t g_can_test_main_rx_count = 0U;
+
+/*
+ * HAL_CAN_GetRxMessage 실패 횟수
+ */
+volatile uint32_t g_can_test_rx_error_count = 0U;
+
+
 // 전방 센서(HC01) 변수 (Echo: PA6 - TIM3_CH1)[cite: 13]
 volatile uint32_t IC_Value1_Front = 0;
 volatile uint8_t Is_First_Captured1 = 0;
@@ -150,7 +182,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   // 1. CAN 필터 설정 및 수신(RX0) 인터럽트 활성화[cite: 5, 6]
-  CAN_FilterTypeDef sFilterConfig;
+  CAN_FilterTypeDef sFilterConfig = {0, };
   sFilterConfig.FilterBank = 0;
   sFilterConfig.FilterMode = CAN_FILTERMODE_IDMASK;
   sFilterConfig.FilterScale = CAN_FILTERSCALE_32BIT;
@@ -166,8 +198,20 @@ int main(void)
   {
     Error_Handler();
   }
-  HAL_CAN_Start(&hcan); // CAN 동작 개시[cite: 5, 6]
-  HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING); // RX0 인터럽트 켜기[cite: 5, 6]
+  // HAL_CAN_Start(&hcan); // CAN 동작 개시[cite: 5, 6]
+  // HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING); // RX0 인터럽트 켜기[cite: 5, 6]
+
+
+  if (HAL_CAN_Start(&hcan) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  if (HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
 
   // 2. TIM3 Input Capture 인터럽트 시작 (PA6: CH1-전방 / PA7: CH2-후방)[cite: 13]
   extern TIM_HandleTypeDef htim3;
@@ -227,8 +271,7 @@ void SystemClock_Config(void)
 
   /** Initializes the CPU, AHB and APB buses clocks
   */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
-                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK|RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
@@ -265,133 +308,216 @@ void SystemClock_Config(void)
  */
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan_ptr)
 {
-  CAN_RxHeaderTypeDef rxHeader;
-  uint8_t rxData[8] = {0, };
 
+    CAN_RxHeaderTypeDef rxHeader = {0, };
 
-  /*
-   * CAN1에서 발생한 수신 인터럽트인지 확인
-   */
-  if (hcan_ptr->Instance != CAN1)
-  {
-    return;
-  }
-
-
-  /*
-   * FIFO0에서 수신 메시지 읽기
-   *
-   * 메시지를 정상적으로 읽지 못한 경우에는
-   * 기존 주행 상태를 그대로 유지한다.
-   */
-  if (HAL_CAN_GetRxMessage(hcan_ptr,
-                           CAN_RX_FIFO0,
-                           &rxHeader,
-                           rxData) != HAL_OK)
-  {
-    return;
-  }
-
-
-  /*
-   * Standard ID Data Frame인지 확인
-   *
-   * 현재 통신 구조에서는:
-   * - Standard 11-bit Identifier
-   * - Data Frame
-   *
-   * 만 사용한다.
-   */
-  if ((rxHeader.IDE != CAN_ID_STD) ||
-      (rxHeader.RTR != CAN_RTR_DATA))
-  {
-    return;
-  }
-
-
-  /*
-   * 수신 노드 ID 확인
-   *
-   * Identifier는 수신 노드 ID이므로
-   * Node_1 대상인 0x002 메시지만 처리한다.
-   */
-  if (rxHeader.StdId != CAN_NODE1_ID)
-  {
-    return;
-  }
-
-
-  /*
-   * Command와 Value를 읽기 위해
-   * 최소 2바이트 이상 수신되었는지 확인한다.
-   *
-   * Data[0] = Command
-   * Data[1] = Value
-   */
-  if (rxHeader.DLC < 2U)
-  {
-    return;
-  }
-
-
-  /*
-   * 제어명령 60번인지 확인
-   *
-   * 다른 Command는 이번 수신 로직에서 처리하지 않는다.
-   */
-  if (rxData[0] != CAN_CMD_DRIVE_STATE)
-  {
-    return;
-  }
-
-
-  /*
-  * Data[1]의 Value를 현재 주행 상태로 저장
-  *
-  * 제어명령 60번의 ICD 정의:
-  * 0 = 전진
-  * 1 = 후진
-  * 2 = 정지
-  *
-  * 이 상태값은 Node_1이 다시 송신하지 않는다.
-  * 전방 또는 후방 초음파 Event의 송신 여부를
-  * 결정하는 조건값으로만 사용한다.
-  */
-  switch (rxData[1])
-  {
-    /*
-     * 전진 상태
-     */
-    case DRIVE_STATE_FORWARD:
-        g_drive_state = DRIVE_STATE_FORWARD;
-        break;
+    uint8_t rxData[8] =
+    {
+      0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U
+    };
 
 
     /*
-     * 후진 상태
-     */
-    case DRIVE_STATE_BACKWARD:
-        g_drive_state = DRIVE_STATE_BACKWARD;
-        break;
+    * CAN1 수신 인터럽트인지 확인
+    */
+    if (hcan_ptr->Instance != CAN1)
+    {
+      return;
+    }
 
 
     /*
-     * 정지 상태
-     */
-    case DRIVE_STATE_STOP:
-        g_drive_state = DRIVE_STATE_STOP;
-        break;
+    * FIFO0에서 메시지 읽기
+    */
+    if (HAL_CAN_GetRxMessage(hcan_ptr, CAN_RX_FIFO0, &rxHeader, rxData) != HAL_OK)
+    {
+      g_can_test_rx_error_count++;
+
+      return;
+    }
 
 
-    default:
+    /*
+    * 수신 Header를 디버깅 변수에 저장
+    */
+    g_can_test_rx_ide = rxHeader.IDE;
+    g_can_test_rx_rtr = rxHeader.RTR;
+    g_can_test_rx_dlc = rxHeader.DLC;
 
-      /*
-       * 정의되지 않은 Value가 들어온 경우
-       * 잘못된 상태로 변경하지 않고
-       * 기존 주행 상태를 그대로 유지한다.
-       */
-      break;
-  }
+
+    /*
+    * Standard ID와 Extended ID 모두 확인 가능하도록 저장
+    */
+    if (rxHeader.IDE == CAN_ID_STD)
+    {
+      g_can_test_rx_id = rxHeader.StdId;
+    }
+    else
+    {
+      g_can_test_rx_id = rxHeader.ExtId;
+    }
+
+
+    /*
+    * 수신 Payload 전체 저장
+    */
+    g_can_test_rx_data[0] = rxData[0];
+    g_can_test_rx_data[1] = rxData[1];
+    g_can_test_rx_data[2] = rxData[2];
+    g_can_test_rx_data[3] = rxData[3];
+    g_can_test_rx_data[4] = rxData[4];
+    g_can_test_rx_data[5] = rxData[5];
+    g_can_test_rx_data[6] = rxData[6];
+    g_can_test_rx_data[7] = rxData[7];
+
+
+    /*
+    * 전체 수신 횟수
+    *
+    * 데이터 복사가 끝난 뒤 마지막에 증가시킨다.
+    */
+    g_can_test_rx_count++;
+
+
+    /*
+    * Main Node 테스트 프레임 수신 횟수
+    */
+    if ((rxHeader.IDE == CAN_ID_STD) && (rxHeader.RTR == CAN_RTR_DATA) && (rxHeader.StdId == CAN_TEST_MAIN_TX_ID))
+    {
+      g_can_test_main_rx_count++;
+    }
+
+
+
+
+
+///////////////////////////////////////////////////////
+
+
+  // CAN_RxHeaderTypeDef rxHeader;
+  // uint8_t rxData[8] = {0, };
+
+
+  // /*
+  //  * CAN1에서 발생한 수신 인터럽트인지 확인
+  //  */
+  // if (hcan_ptr->Instance != CAN1)
+  // {
+  //   return;
+  // }
+
+
+  // /*
+  //  * FIFO0에서 수신 메시지 읽기
+  //  *
+  //  * 메시지를 정상적으로 읽지 못한 경우에는
+  //  * 기존 주행 상태를 그대로 유지한다.
+  //  */
+  // if (HAL_CAN_GetRxMessage(hcan_ptr, CAN_RX_FIFO0, &rxHeader, rxData) != HAL_OK)
+  // {
+  //   return;
+  // }
+
+
+  // /*
+  //  * Standard ID Data Frame인지 확인
+  //  *
+  //  * 현재 통신 구조에서는:
+  //  * - Standard 11-bit Identifier
+  //  * - Data Frame
+  //  *
+  //  * 만 사용한다.
+  //  */
+  // if ((rxHeader.IDE != CAN_ID_STD) ||
+  //     (rxHeader.RTR != CAN_RTR_DATA))
+  // {
+  //   return;
+  // }
+
+
+  // /*
+  //  * 수신 노드 ID 확인
+  //  *
+  //  * Identifier는 수신 노드 ID이므로
+  //  * Node_1 대상인 0x002 메시지만 처리한다.
+  //  */
+  // if (rxHeader.StdId != CAN_NODE1_ID)
+  // {
+  //   return;
+  // }
+
+
+  // /*
+  //  * Command와 Value를 읽기 위해
+  //  * 최소 2바이트 이상 수신되었는지 확인한다.
+  //  *
+  //  * Data[0] = Command
+  //  * Data[1] = Value
+  //  */
+  // if (rxHeader.DLC < 2U)
+  // {
+  //   return;
+  // }
+
+
+  // /*
+  //  * 제어명령 60번인지 확인
+  //  *
+  //  * 다른 Command는 이번 수신 로직에서 처리하지 않는다.
+  //  */
+  // if (rxData[0] != CAN_CMD_DRIVE_STATE)
+  // {
+  //   return;
+  // }
+
+
+  // /*
+  // * Data[1]의 Value를 현재 주행 상태로 저장
+  // *
+  // * 제어명령 60번의 ICD 정의:
+  // * 0 = 전진
+  // * 1 = 후진
+  // * 2 = 정지
+  // *
+  // * 이 상태값은 Node_1이 다시 송신하지 않는다.
+  // * 전방 또는 후방 초음파 Event의 송신 여부를
+  // * 결정하는 조건값으로만 사용한다.
+  // */
+  // switch (rxData[1])
+  // {
+  //   /*
+  //    * 전진 상태
+  //    */
+  //   case DRIVE_STATE_FORWARD:
+  //       g_drive_state = DRIVE_STATE_FORWARD;
+  //       break;
+
+
+  //   /*
+  //    * 후진 상태
+  //    */
+  //   case DRIVE_STATE_BACKWARD:
+  //       g_drive_state = DRIVE_STATE_BACKWARD;
+  //       break;
+
+
+  //   /*
+  //    * 정지 상태
+  //    */
+  //   case DRIVE_STATE_STOP:
+  //       g_drive_state = DRIVE_STATE_STOP;
+  //       break;
+
+
+  //   default:
+
+  //     /*
+  //      * 정의되지 않은 Value가 들어온 경우
+  //      * 잘못된 상태로 변경하지 않고
+  //      * 기존 주행 상태를 그대로 유지한다.
+  //      */
+  //     break;
+  // }
 }
 
 // ---------------- [Input Capture 인터럽트 콜백] ----------------[cite: 13]

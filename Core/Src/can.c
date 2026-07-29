@@ -46,17 +46,38 @@ void MX_CAN_Init(void)
   hcan.Init.TimeTriggeredMode = DISABLE;
   hcan.Init.AutoBusOff = DISABLE;
   hcan.Init.AutoWakeUp = DISABLE;
-  
+    
+  // hcan.Init.ReceiveFifoLocked = DISABLE;
+  // hcan.Init.TransmitFifoPriority = DISABLE;
+  // if (HAL_CAN_Init(&hcan) != HAL_OK)
+  // {
+  //   Error_Handler();
+  // }
+  /* USER CODE BEGIN CAN_Init 2 */
+
+  // hcan.Init.AutoRetransmission = DISABLE; // 개인 테스트용
+  // hcan.Init.AutoRetransmission = ENABLE;
+
+
+  hcan.Init.TimeTriggeredMode = DISABLE;
+  hcan.Init.AutoBusOff = DISABLE;
+  hcan.Init.AutoWakeUp = DISABLE;
+
+  /*
+  * 실제 CAN 통신 테스트에서는
+  * ACK 오류 발생 시 자동 재전송하도록 설정
+  */
+  hcan.Init.AutoRetransmission = ENABLE;
+
   hcan.Init.ReceiveFifoLocked = DISABLE;
   hcan.Init.TransmitFifoPriority = DISABLE;
+
   if (HAL_CAN_Init(&hcan) != HAL_OK)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN CAN_Init 2 */
 
-  // hcan.Init.AutoRetransmission = DISABLE; //테스트용
-  hcan.Init.AutoRetransmission = ENABLE;
+
 
   /* USER CODE END CAN_Init 2 */
 

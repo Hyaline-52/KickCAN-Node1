@@ -296,6 +296,18 @@ typedef struct
 /* USER CODE BEGIN Variables */
 
 /*
+ * CAN 테스트 송신 디버깅 변수
+ */
+volatile uint32_t g_can_test_tx_count = 0U;
+volatile uint32_t g_can_test_tx_fail_count = 0U;
+volatile uint32_t g_can_test_tx_no_mailbox_count = 0U;
+
+volatile uint32_t g_can_test_tx_last_status = 0U;
+volatile uint32_t g_can_test_tx_last_mailbox = 0U;
+volatile uint32_t g_can_test_tx_free_level = 0U;
+
+
+/*
  * main.c에 선언된 거리 변수 및 us delay 함수 참조
  */
 extern volatile uint16_t Distance_Front;
@@ -346,11 +358,9 @@ volatile LightState_t g_light_state = LIGHT_STATE_OFF;
 /*
  * 전방·후방 초음파 현재 상태
  */
-volatile UltrasonicState_t g_front_ultrasonic_state =
-    ULTRASONIC_STATE_CLEAR;
+volatile UltrasonicState_t g_front_ultrasonic_state = ULTRASONIC_STATE_CLEAR;
 
-volatile UltrasonicState_t g_rear_ultrasonic_state =
-    ULTRASONIC_STATE_CLEAR;
+volatile UltrasonicState_t g_rear_ultrasonic_state = ULTRASONIC_STATE_CLEAR;
 
 
 /* USER CODE END Variables */
@@ -560,8 +570,7 @@ void StartTaskTP(void const * argument)
        * 이전 필터값 80%
        */
       g_auto_light.tp.filtered_raw =
-          (uint16_t)((0.2f * (float)raw_tp) +
-                     (0.8f * (float)g_auto_light.tp.filtered_raw));
+          (uint16_t)((0.2f * (float)raw_tp) + (0.8f * (float)g_auto_light.tp.filtered_raw));
     }
 
 
@@ -598,9 +607,7 @@ void StartTaskTP(void const * argument)
      * 최종 기준:
      * 50℃ 이상 → 경고
      */
-    if ((current_temperature_state == TEMP_STATE_NORMAL) &&
-        (g_auto_light.tp.temperature >=
-         TEMP_WARNING_THRESHOLD))
+    if ((current_temperature_state == TEMP_STATE_NORMAL) && (g_auto_light.tp.temperature >= TEMP_WARNING_THRESHOLD))
     {
       current_temperature_state = TEMP_STATE_WARNING;
     }
@@ -613,9 +620,7 @@ void StartTaskTP(void const * argument)
      * 경고 진입 온도와 해제 온도를 다르게 두어
      * 경계 온도에서 명령이 반복되는 것을 방지한다.
      */
-    else if ((current_temperature_state == TEMP_STATE_WARNING) &&
-             (g_auto_light.tp.temperature <=
-              TEMP_NORMAL_THRESHOLD))
+    else if ((current_temperature_state == TEMP_STATE_WARNING) && (g_auto_light.tp.temperature <= TEMP_NORMAL_THRESHOLD))
     {
       current_temperature_state = TEMP_STATE_NORMAL;
     }
@@ -706,9 +711,7 @@ void StartTaskTP(void const * argument)
       * 큐가 가득 찬 경우에는
       * 공간이 생길 때까지 대기한다.
       */
-      xQueueSend(QueueCANHandle,
-                &temperature_message,
-                portMAX_DELAY);
+      xQueueSend(QueueCANHandle, &temperature_message, portMAX_DELAY);
 
 
       /*
@@ -795,21 +798,15 @@ void StartTaskHC1(void const * argument)
      * PC0:
      * 전방 HC-SR04의 Trig 출력
      */
-    HAL_GPIO_WritePin(GPIOC,
-                      PC0_A5_HCTr1_Pin,
-                      GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOC, PC0_A5_HCTr1_Pin, GPIO_PIN_RESET);
 
     delay_us(2);
 
-    HAL_GPIO_WritePin(GPIOC,
-                      PC0_A5_HCTr1_Pin,
-                      GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOC, PC0_A5_HCTr1_Pin, GPIO_PIN_SET);
 
     delay_us(10);
 
-    HAL_GPIO_WritePin(GPIOC,
-                      PC0_A5_HCTr1_Pin,
-                      GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOC, PC0_A5_HCTr1_Pin, GPIO_PIN_RESET);
 
 
     /*
@@ -848,8 +845,7 @@ void StartTaskHC1(void const * argument)
      * 다음 유효 거리 측정 시 현재 전방 Event를
      * 한 번 송신하기 위해서다.
      */
-    if ((front_distance < ULTRASONIC_MIN_VALID_CM) ||
-        (front_distance > ULTRASONIC_MAX_VALID_CM))
+    if ((front_distance < ULTRASONIC_MIN_VALID_CM) || (front_distance > ULTRASONIC_MAX_VALID_CM))
     {
       osDelay(120);
       continue;
@@ -922,8 +918,7 @@ void StartTaskHC1(void const * argument)
      */
     uint8_t entered_forward = 0U;
 
-    if ((current_drive_state == DRIVE_STATE_FORWARD) &&
-        (previous_drive_state != DRIVE_STATE_FORWARD))
+    if ((current_drive_state == DRIVE_STATE_FORWARD) && (previous_drive_state != DRIVE_STATE_FORWARD))
     {
       entered_forward = 1U;
     }
@@ -940,9 +935,7 @@ void StartTaskHC1(void const * argument)
      * 후진 또는 정지 상태에서는
      * 전방 초음파 Event를 큐에 등록하지 않는다.
      */
-    if ((current_drive_state == DRIVE_STATE_FORWARD) &&
-        ((entered_forward == 1U) ||
-         (front_state_changed == 1U)))
+    if ((current_drive_state == DRIVE_STATE_FORWARD) && ((entered_forward == 1U) || (front_state_changed == 1U)))
     {
       /*
        * TaskCAN으로 전달할 CAN 송신 요청
@@ -1043,9 +1036,7 @@ void StartTaskHC1(void const * argument)
        * 초음파 Event는 거리 상태가 변경될 때만 발생하므로
        * 일반적인 동작에서는 Task가 장시간 대기하지 않는다.
        */
-      xQueueSend(QueueCANHandle,
-                 &front_message,
-                 portMAX_DELAY);
+      xQueueSend(QueueCANHandle, &front_message, portMAX_DELAY);
     }
 
 
@@ -1059,8 +1050,7 @@ void StartTaskHC1(void const * argument)
      * Node_2는 Main Node에서 주행 상태를 별도로 받아
      * 현재 사용하지 않는 방향의 Event를 처리한다.
      */
-    previous_drive_state =
-        current_drive_state;
+    previous_drive_state = current_drive_state;
 
 
     /*
@@ -1139,21 +1129,15 @@ void StartTaskHC2(void const * argument)
      * PC1:
      * 후방 HC-SR04의 Trig 출력
      */
-    HAL_GPIO_WritePin(GPIOC,
-                      PC1_A4_HCTr2_Pin,
-                      GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOC, PC1_A4_HCTr2_Pin, GPIO_PIN_RESET);
 
     delay_us(2);
 
-    HAL_GPIO_WritePin(GPIOC,
-                      PC1_A4_HCTr2_Pin,
-                      GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOC, PC1_A4_HCTr2_Pin, GPIO_PIN_SET);
 
     delay_us(10);
 
-    HAL_GPIO_WritePin(GPIOC,
-                      PC1_A4_HCTr2_Pin,
-                      GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOC, PC1_A4_HCTr2_Pin, GPIO_PIN_RESET);
 
 
     /*
@@ -1192,8 +1176,7 @@ void StartTaskHC2(void const * argument)
      * 다음 유효 거리 측정 시 현재 후방 Event를
      * 한 번 송신하기 위해서다.
      */
-    if ((rear_distance < ULTRASONIC_MIN_VALID_CM) ||
-        (rear_distance > ULTRASONIC_MAX_VALID_CM))
+    if ((rear_distance < ULTRASONIC_MIN_VALID_CM) || (rear_distance > ULTRASONIC_MAX_VALID_CM))
     {
       osDelay(120);
       continue;
@@ -1267,8 +1250,7 @@ void StartTaskHC2(void const * argument)
      */
     uint8_t entered_backward = 0U;
 
-    if ((current_drive_state == DRIVE_STATE_BACKWARD) &&
-        (previous_drive_state != DRIVE_STATE_BACKWARD))
+    if ((current_drive_state == DRIVE_STATE_BACKWARD) && (previous_drive_state != DRIVE_STATE_BACKWARD))
     {
       entered_backward = 1U;
     }
@@ -1285,9 +1267,7 @@ void StartTaskHC2(void const * argument)
      * 전진 또는 정지 상태에서는
      * 후방 초음파 Event를 큐에 등록하지 않는다.
      */
-    if ((current_drive_state == DRIVE_STATE_BACKWARD) &&
-        ((entered_backward == 1U) ||
-         (rear_state_changed == 1U)))
+    if ((current_drive_state == DRIVE_STATE_BACKWARD) && ((entered_backward == 1U) || (rear_state_changed == 1U)))
     {
       /*
        * TaskCAN으로 전달할 CAN 송신 요청
@@ -1385,9 +1365,7 @@ void StartTaskHC2(void const * argument)
        * 큐가 가득 찬 경우에는
        * 공간이 생길 때까지 대기한다.
        */
-      xQueueSend(QueueCANHandle,
-                 &rear_message,
-                 portMAX_DELAY);
+      xQueueSend(QueueCANHandle, &rear_message, portMAX_DELAY);
     }
 
 
@@ -1518,13 +1496,9 @@ void StartTaskLD(void const * argument)
      *
      * 현재값 20%, 이전 필터값 80%
      */
-    g_auto_light.forward.filtered =
-        (uint16_t)((0.2f * (float)raw_fw) +
-                   (0.8f * (float)g_auto_light.forward.filtered));
+    g_auto_light.forward.filtered = (uint16_t)((0.2f * (float)raw_fw) + (0.8f * (float)g_auto_light.forward.filtered));
 
-    g_auto_light.overhead.filtered =           
-        (uint16_t)((0.2f * (float)raw_oh) +
-                   (0.8f * (float)g_auto_light.overhead.filtered));
+    g_auto_light.overhead.filtered = (uint16_t)((0.2f * (float)raw_oh) + (0.8f * (float)g_auto_light.overhead.filtered));
 
 
     /*
@@ -1533,11 +1507,9 @@ void StartTaskLD(void const * argument)
      * 양수: ADC값 감소 → 어두워짐
      * 음수: ADC값 증가 → 밝아짐
      */
-    g_auto_light.forward.delta =
-        (int16_t)prev_fw_filt - (int16_t)g_auto_light.forward.filtered;
+    g_auto_light.forward.delta = (int16_t)prev_fw_filt - (int16_t)g_auto_light.forward.filtered;
 
-    g_auto_light.overhead.delta =
-        (int16_t)prev_oh_filt - (int16_t)g_auto_light.overhead.filtered;
+    g_auto_light.overhead.delta = (int16_t)prev_oh_filt - (int16_t)g_auto_light.overhead.filtered;
 
 
     /*
@@ -1569,9 +1541,7 @@ void StartTaskLD(void const * argument)
      * - 빠른 라이트 점등
      * - CAN 명령 112
      */
-    if ((raw_fw <= LIGHT_DARK_THRESHOLD) &&
-        (raw_oh >= LIGHT_BRIGHT_THRESHOLD) &&
-        (fw_raw_delta >= LIGHT_RAW_RAPID_DROP))
+    if ((raw_fw <= LIGHT_DARK_THRESHOLD) && (raw_oh >= LIGHT_BRIGHT_THRESHOLD) && (fw_raw_delta >= LIGHT_RAW_RAPID_DROP))
     {
       current_light_state = LIGHT_STATE_FAST_ON;
 
@@ -1593,10 +1563,7 @@ void StartTaskLD(void const * argument)
      * - 자연스러운 라이트 점등
      * - CAN 명령 113
      */
-    else if (((forward_level == LIGHT_LEVEL_DARK) &&
-              (overhead_level == LIGHT_LEVEL_DARK)) ||
-             ((g_auto_light.forward.delta >= LIGHT_FILTERED_DROP) &&
-              (g_auto_light.overhead.delta >= LIGHT_FILTERED_DROP)))
+    else if (((forward_level == LIGHT_LEVEL_DARK) && (overhead_level == LIGHT_LEVEL_DARK)) || ((g_auto_light.forward.delta >= LIGHT_FILTERED_DROP) && (g_auto_light.overhead.delta >= LIGHT_FILTERED_DROP)))
     {
       current_light_state = LIGHT_STATE_SMOOTH_ON;
 
@@ -1615,8 +1582,7 @@ void StartTaskLD(void const * argument)
      *
      * 짧게 유지되면 기존 상태를 그대로 유지한다.
      */
-    else if ((raw_fw <= LIGHT_DARK_THRESHOLD) &&
-             (raw_oh >= LIGHT_BRIGHT_THRESHOLD))
+    else if ((raw_fw <= LIGHT_DARK_THRESHOLD) && (raw_oh >= LIGHT_BRIGHT_THRESHOLD))
     {
       if (shadow_count < SHADOW_CONFIRM_COUNT)
       {
@@ -1644,8 +1610,7 @@ void StartTaskLD(void const * argument)
      * 전방과 상공 센서 모두 2500 이상인 상태가
      * 약 500ms 지속되면 라이트를 해제한다.
      */
-    else if ((forward_level == LIGHT_LEVEL_BRIGHT) &&
-             (overhead_level == LIGHT_LEVEL_BRIGHT))
+    else if ((forward_level == LIGHT_LEVEL_BRIGHT) && (overhead_level == LIGHT_LEVEL_BRIGHT))
     {
       shadow_count = 0;
 
@@ -1783,9 +1748,7 @@ void StartTaskLD(void const * argument)
       * 큐가 가득 찬 경우에는
       * 공간이 생길 때까지 대기한다.
       */
-      xQueueSend(QueueCANHandle,
-                &light_message,
-                portMAX_DELAY);
+      xQueueSend(QueueCANHandle, &light_message, portMAX_DELAY);
 
 
       /*
@@ -1827,210 +1790,331 @@ void StartTaskCAN(void const * argument)
 
 
   /*
-   * 각 센서 Task가 QueueCAN에 등록한
-   * CAN 송신 요청을 저장할 구조체
+   * 센서 Task들이 Queue에 등록한 메시지를
+   * 테스트 중 임시로 꺼내 버리기 위한 변수
    *
-   * 포함 정보:
-   * - 수신 노드 ID
-   * - Command
-   * - Value
+   * 이를 하지 않으면 Queue가 가득 차서
+   * 센서 Task가 xQueueSend에서 Block될 수 있다.
    */
-  CanTxMessage_t tx_message;
+  CanTxMessage_t discarded_message;
 
 
   /*
-   * STM32F103 bxCAN 송신 Header
-   *
-   * 현재 프로젝트는 FDCAN이 아니라
-   * Classic bxCAN을 사용한다.
+   * CAN 테스트 송신 Header
    */
   CAN_TxHeaderTypeDef txHeader = {0, };
 
 
   /*
-   * CAN 송신에 사용된 Mailbox 번호를 저장한다.
-   *
-   * STM32 bxCAN에는 송신 Mailbox가 3개 존재한다.
+   * HAL_CAN_AddTxMessage 결과 Mailbox
    */
   uint32_t txMailbox = 0U;
 
 
   /*
-   * 실제 CAN으로 송신할 8바이트 Payload
+   * 테스트 데이터
    *
-   * Data[0]   = Command
-   * Data[1]   = Value
-   * Data[2~7] = Padding
+   * 팀원 코드의 데이터 배치와 동일:
+   *
+   * Data[0~1] = vehicle_speed, Big Endian
+   * Data[2~3] = engine_rpm, Big Endian
+   * Data[4]   = temperature
+   * Data[5~7] = 0
+   *
+   * vehicle_speed = 100
+   * engine_rpm    = 2000
+   * temperature   = 25
    */
-  uint8_t txData[8] = {0, };
+  uint8_t txData[8] =
+  {
+    0x00U, 0x64U,   /* Speed = 100 */
+    0x07U, 0xD0U,   /* RPM = 2000 */
+    0x19U,          /* Temperature = 25 */
+    0x00U,
+    0x00U,
+    0x00U
+  };
 
 
   /*
-   * CAN Header의 공통 설정
-   *
-   * StdId는 수신 메시지마다 목적지가 다를 수 있으므로
-   * 큐에서 메시지를 꺼낸 뒤 설정한다.
+   * Node_1 테스트 송신 Header
    */
-  txHeader.IDE = CAN_ID_STD;           // Standard 11-bit Identifier
-  txHeader.RTR = CAN_RTR_DATA;         // Data Frame
-  txHeader.DLC = 8U;                   // Payload 8 Bytes
+  txHeader.StdId = CAN_TEST_NODE1_TX_ID;
+  txHeader.ExtId = 0U;
+  txHeader.IDE = CAN_ID_STD;
+  txHeader.RTR = CAN_RTR_DATA;
+  txHeader.DLC = 8U;
   txHeader.TransmitGlobalTime = DISABLE;
 
 
   for (;;)
   {
     /*
-     * 1. QueueCAN에서 CAN 송신 요청을 기다린다.
+     * 테스트 중 센서 Event Queue를 비운다.
      *
-     * portMAX_DELAY:
-     * 큐에 메시지가 들어올 때까지 TaskCAN을 Block 상태로 둔다.
-     *
-     * 따라서 기존처럼 500ms마다 전역 변수를 확인하지 않고,
-     * Event가 발생했을 때 즉시 TaskCAN이 깨어난다.
+     * 센서 Task와 ADC/DMA는 계속 동작하지만
+     * 센서 Event는 실제 CAN으로 보내지 않는다.
      */
-    if (xQueueReceive(QueueCANHandle,
-                      &tx_message,
-                      portMAX_DELAY) != pdPASS)
+    while (xQueueReceive(QueueCANHandle, &discarded_message, 0U) == pdPASS)
     {
       /*
-       * 정상적으로는 portMAX_DELAY를 사용하므로
-       * 이 조건에 들어오지 않는다.
+       * 테스트 기간에는 센서 메시지를 사용하지 않는다.
        */
-      continue;
     }
 
 
     /*
-     * 2. 수신 노드 ID 유효성 확인
-     *
-     * Standard CAN Identifier는 11비트이므로
-     * 사용할 수 있는 범위는 0x000~0x7FF이다.
+     * 현재 Mailbox 여유 개수 저장
      */
-    if (tx_message.destination_id > 0x7FFU)
+    g_can_test_tx_free_level = HAL_CAN_GetTxMailboxesFreeLevel(&hcan);
+
+
+    if (g_can_test_tx_free_level > 0U)
     {
+      HAL_StatusTypeDef tx_status;
+
+
       /*
-       * 잘못된 Identifier는 CAN으로 송신하지 않는다.
-       *
-       * UART 출력은 TaskCAN에서만 수행한다.
+       * Node_1 → Main 테스트 프레임 송신
        */
-      printf("[CAN TX ERROR] Invalid ID=0x%03X\r\n",
-             (unsigned int)tx_message.destination_id);
-
-      continue;
-    }
+      tx_status = HAL_CAN_AddTxMessage(&hcan, &txHeader, txData, &txMailbox);
 
 
-    /*
-     * 3. CAN Header의 Identifier 설정
-     *
-     * 현재 통신 규칙:
-     * Identifier = 수신 노드 ID
-     *
-     * 예:
-     * Node_2 대상 메시지 → StdId = 0x003
-     */
-    txHeader.StdId =
-        tx_message.destination_id;
-
-
-    /*
-     * 4. Payload 초기화
-     *
-     * 이전 송신 데이터가 남지 않도록
-     * 모든 바이트를 0으로 초기화한다.
-     */
-    txData[0] = 0U;
-    txData[1] = 0U;
-    txData[2] = 0U;
-    txData[3] = 0U;
-    txData[4] = 0U;
-    txData[5] = 0U;
-    txData[6] = 0U;
-    txData[7] = 0U;
-
-
-    /*
-     * 5. Payload 패킹
-     *
-     * 확정된 데이터 구조:
-     *
-     * Data[0]   = Command
-     * Data[1]   = Value
-     * Data[2~7] = Padding 0
-     */
-    txData[0] =
-        tx_message.command;
-
-    txData[1] =
-        tx_message.value;
-
-
-    /*
-     * 6. 사용할 수 있는 CAN 송신 Mailbox가 생길 때까지 대기
-     *
-     * TaskCAN만 CAN 송신을 담당하지만,
-     * 이전 메시지가 아직 Mailbox에 남아 있을 수 있으므로
-     * 여유 Mailbox가 있는지 확인한다.
-     */
-    while (HAL_CAN_GetTxMailboxesFreeLevel(&hcan) == 0U)
-    {
       /*
-       * 다른 Task가 실행될 수 있도록
-       * 1ms 동안 Block 상태로 전환한다.
+       * 디버거 확인용 최근 결과 저장
        */
-      osDelay(1);
-    }
+      g_can_test_tx_last_status = (uint32_t)tx_status;
+
+      g_can_test_tx_last_mailbox = txMailbox;
 
 
-    /*
-     * 7. 실제 CAN 메시지 송신 요청
-     *
-     * 이 함수는 메시지를 bxCAN 송신 Mailbox에 등록한다.
-     */
-    if (HAL_CAN_AddTxMessage(&hcan,
-                             &txHeader,
-                             txData,
-                             &txMailbox) == HAL_OK)
-    {
-      /*
-       * CAN 송신 요청 성공 확인
-       *
-       * 모든 UART 확인 출력은 TaskCAN에서만 수행한다.
-       */
-      printf("[CAN TX] "
-             "ID=0x%03X CMD=%3u VALUE=%3u | "
-             "DATA=[%02X %02X %02X %02X "
-             "%02X %02X %02X %02X]\r\n",
-
-             (unsigned int)txHeader.StdId,
-             (unsigned int)txData[0],
-             (unsigned int)txData[1],
-
-             (unsigned int)txData[0],
-             (unsigned int)txData[1],
-             (unsigned int)txData[2],
-             (unsigned int)txData[3],
-             (unsigned int)txData[4],
-             (unsigned int)txData[5],
-             (unsigned int)txData[6],
-             (unsigned int)txData[7]);
+      if (tx_status == HAL_OK)
+      {
+        g_can_test_tx_count++;
+      }
+      else
+      {
+        g_can_test_tx_fail_count++;
+      }
     }
     else
     {
       /*
-       * CAN Mailbox 등록 실패
-       *
-       * 현재 단계에서는 실패 사실을 UART로 확인한다.
-       * 센서 Task에서는 CAN 오류를 처리하지 않는다.
+       * ACK를 받지 못하거나 CAN 연결에 문제가 있으면
+       * Mailbox가 계속 점유될 수 있다.
        */
-      printf("[CAN TX FAIL] "
-             "ID=0x%03X CMD=%3u VALUE=%3u\r\n",
-
-             (unsigned int)txHeader.StdId,
-             (unsigned int)txData[0],
-             (unsigned int)txData[1]);
+      g_can_test_tx_no_mailbox_count++;
     }
+
+
+    /*
+     * 500ms마다 테스트 프레임 송신
+     */
+    osDelay(500);
   }
+
+
+
+
+
+  ///////////////////////////////////////////////
+
+  // /*
+  //  * 각 센서 Task가 QueueCAN에 등록한
+  //  * CAN 송신 요청을 저장할 구조체
+  //  *
+  //  * 포함 정보:
+  //  * - 수신 노드 ID
+  //  * - Command
+  //  * - Value
+  //  */
+  // CanTxMessage_t tx_message;
+
+
+  // /*
+  //  * STM32F103 bxCAN 송신 Header
+  //  *
+  //  * 현재 프로젝트는 FDCAN이 아니라
+  //  * Classic bxCAN을 사용한다.
+  //  */
+  // CAN_TxHeaderTypeDef txHeader = {0, };
+
+
+  // /*
+  //  * CAN 송신에 사용된 Mailbox 번호를 저장한다.
+  //  *
+  //  * STM32 bxCAN에는 송신 Mailbox가 3개 존재한다.
+  //  */
+  // uint32_t txMailbox = 0U;
+
+
+  // /*
+  //  * 실제 CAN으로 송신할 8바이트 Payload
+  //  *
+  //  * Data[0]   = Command
+  //  * Data[1]   = Value
+  //  * Data[2~7] = Padding
+  //  */
+  // uint8_t txData[8] = {0, };
+
+
+  // /*
+  //  * CAN Header의 공통 설정
+  //  *
+  //  * StdId는 수신 메시지마다 목적지가 다를 수 있으므로
+  //  * 큐에서 메시지를 꺼낸 뒤 설정한다.
+  //  */
+  // txHeader.IDE = CAN_ID_STD;           // Standard 11-bit Identifier
+  // txHeader.RTR = CAN_RTR_DATA;         // Data Frame
+  // txHeader.DLC = 8U;                   // Payload 8 Bytes
+  // txHeader.TransmitGlobalTime = DISABLE;
+
+
+  // for (;;)
+  // {
+  //   /*
+  //    * 1. QueueCAN에서 CAN 송신 요청을 기다린다.
+  //    *
+  //    * portMAX_DELAY:
+  //    * 큐에 메시지가 들어올 때까지 TaskCAN을 Block 상태로 둔다.
+  //    *
+  //    * 따라서 기존처럼 500ms마다 전역 변수를 확인하지 않고,
+  //    * Event가 발생했을 때 즉시 TaskCAN이 깨어난다.
+  //    */
+  //   if (xQueueReceive(QueueCANHandle, &tx_message, portMAX_DELAY) != pdPASS)
+  //   {
+  //     /*
+  //      * 정상적으로는 portMAX_DELAY를 사용하므로
+  //      * 이 조건에 들어오지 않는다.
+  //      */
+  //     continue;
+  //   }
+
+
+  //   /*
+  //    * 2. 수신 노드 ID 유효성 확인
+  //    *
+  //    * Standard CAN Identifier는 11비트이므로
+  //    * 사용할 수 있는 범위는 0x000~0x7FF이다.
+  //    */
+  //   if (tx_message.destination_id > 0x7FFU)
+  //   {
+  //     /*
+  //      * 잘못된 Identifier는 CAN으로 송신하지 않는다.
+  //      *
+  //      * UART 출력은 TaskCAN에서만 수행한다.
+  //      */
+  //     printf("[CAN TX ERROR] Invalid ID=0x%03X\r\n", (unsigned int)tx_message.destination_id);
+
+  //     continue;
+  //   }
+
+
+  //   /*
+  //    * 3. CAN Header의 Identifier 설정
+  //    *
+  //    * 현재 통신 규칙:
+  //    * Identifier = 수신 노드 ID
+  //    *
+  //    * 예:
+  //    * Node_2 대상 메시지 → StdId = 0x003
+  //    */
+  //   txHeader.StdId = tx_message.destination_id;
+
+
+  //   /*
+  //    * 4. Payload 초기화
+  //    *
+  //    * 이전 송신 데이터가 남지 않도록
+  //    * 모든 바이트를 0으로 초기화한다.
+  //    */
+  //   txData[0] = 0U;
+  //   txData[1] = 0U;
+  //   txData[2] = 0U;
+  //   txData[3] = 0U;
+  //   txData[4] = 0U;
+  //   txData[5] = 0U;
+  //   txData[6] = 0U;
+  //   txData[7] = 0U;
+
+
+  //   /*
+  //    * 5. Payload 패킹
+  //    *
+  //    * 확정된 데이터 구조:
+  //    *
+  //    * Data[0]   = Command
+  //    * Data[1]   = Value
+  //    * Data[2~7] = Padding 0
+  //    */
+  //   txData[0] = tx_message.command;
+
+  //   txData[1] = tx_message.value;
+
+
+  //   /*
+  //    * 6. 사용할 수 있는 CAN 송신 Mailbox가 생길 때까지 대기
+  //    *
+  //    * TaskCAN만 CAN 송신을 담당하지만,
+  //    * 이전 메시지가 아직 Mailbox에 남아 있을 수 있으므로
+  //    * 여유 Mailbox가 있는지 확인한다.
+  //    */
+  //   while (HAL_CAN_GetTxMailboxesFreeLevel(&hcan) == 0U)
+  //   {
+  //     /*
+  //      * 다른 Task가 실행될 수 있도록
+  //      * 1ms 동안 Block 상태로 전환한다.
+  //      */
+  //     osDelay(1);
+  //   }
+
+
+  //   /*
+  //    * 7. 실제 CAN 메시지 송신 요청
+  //    *
+  //    * 이 함수는 메시지를 bxCAN 송신 Mailbox에 등록한다.
+  //    */
+  //   if (HAL_CAN_AddTxMessage(&hcan, &txHeader, txData, &txMailbox) == HAL_OK)
+  //   {
+  //     /*
+  //      * CAN 송신 요청 성공 확인
+  //      *
+  //      * 모든 UART 확인 출력은 TaskCAN에서만 수행한다.
+  //      */
+  //     printf("[CAN TX] "
+  //            "ID=0x%03X CMD=%3u VALUE=%3u | "
+  //            "DATA=[%02X %02X %02X %02X "
+  //            "%02X %02X %02X %02X]\r\n",
+
+  //            (unsigned int)txHeader.StdId,
+  //            (unsigned int)txData[0],
+  //            (unsigned int)txData[1],
+
+  //            (unsigned int)txData[0],
+  //            (unsigned int)txData[1],
+  //            (unsigned int)txData[2],
+  //            (unsigned int)txData[3],
+  //            (unsigned int)txData[4],
+  //            (unsigned int)txData[5],
+  //            (unsigned int)txData[6],
+  //            (unsigned int)txData[7]);
+  //   }
+  //   else
+  //   {
+  //     /*
+  //      * CAN Mailbox 등록 실패
+  //      *
+  //      * 현재 단계에서는 실패 사실을 UART로 확인한다.
+  //      * 센서 Task에서는 CAN 오류를 처리하지 않는다.
+  //      */
+  //     printf("[CAN TX FAIL] "
+  //            "ID=0x%03X CMD=%3u VALUE=%3u\r\n",
+
+  //            (unsigned int)txHeader.StdId,
+  //            (unsigned int)txData[0],
+  //            (unsigned int)txData[1]);
+  //   }
+  // }
 
 
 
