@@ -154,7 +154,7 @@ void Error_Handler(void);
  *
  * Main Node에서는 이 ID의 프레임을 수신한다.
  */
-#define CAN_TEST_NODE1_TX_ID       0x100U
+#define CAN_TEST_NODE1_TX_ID       0x001U
 
 /* USER CODE END Private defines */
 

@@ -1827,9 +1827,9 @@ void StartTaskCAN(void const * argument)
    */
   uint8_t txData[8] =
   {
-    0x00U, 0x64U,   /* Speed = 100 */
-    0x07U, 0xD0U,   /* RPM = 2000 */
-    0x19U,          /* Temperature = 25 */
+    10U, 0x10U,   /* Speed = 100 */
+    0xAA, 0xBB,   /* RPM = 2000 */
+    0xCC,          /* Temperature = 25 */
     0x00U,
     0x00U,
     0x00U
@@ -1877,6 +1877,7 @@ void StartTaskCAN(void const * argument)
       /*
        * Node_1 → Main 테스트 프레임 송신
        */
+      // txData[2]++;
       tx_status = HAL_CAN_AddTxMessage(&hcan, &txHeader, txData, &txMailbox);
 
 
