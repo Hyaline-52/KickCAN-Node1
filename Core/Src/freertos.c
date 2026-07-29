@@ -1742,8 +1742,7 @@ void StartTaskLD(void const * argument)
       * TaskCAN에서는 이 값을
       * CAN Header의 Standard Identifier로 사용한다.
       */
-      light_message.destination_id =
-          CAN_NODE2_ID;
+      light_message.destination_id = CAN_NODE2_ID;
 
 
       /*
@@ -1765,8 +1764,7 @@ void StartTaskLD(void const * argument)
           * 최종 Payload:
           * [70 02 00 00 00 00 00 00]
           */
-          light_message.command =
-              (uint8_t)CAN_CMD_LIGHT_FAST_ON;
+          light_message.command = (uint8_t)CAN_CMD_LIGHT_FAST_ON;
 
           light_message.value = 2U;
           break;
@@ -1785,8 +1783,7 @@ void StartTaskLD(void const * argument)
           * 최종 Payload:
           * [71 01 00 00 00 00 00 00]
           */
-          light_message.command =
-              (uint8_t)CAN_CMD_LIGHT_SMOOTH_ON;
+          light_message.command = (uint8_t)CAN_CMD_LIGHT_SMOOTH_ON;
 
           light_message.value = 1U;
           break;
@@ -1806,8 +1803,7 @@ void StartTaskLD(void const * argument)
           * 최종 Payload:
           * [72 00 00 00 00 00 00 00]
           */
-          light_message.command =
-              (uint8_t)CAN_CMD_LIGHT_OFF;
+          light_message.command = (uint8_t)CAN_CMD_LIGHT_OFF;
 
           light_message.value = 0U;
           break;
@@ -1833,8 +1829,7 @@ void StartTaskLD(void const * argument)
       *
       * UART 확인 및 디버깅을 위해 유지한다.
       */
-      g_light_state =
-          current_light_state;
+      g_light_state = current_light_state;
 
 
       /*
@@ -1843,8 +1838,7 @@ void StartTaskLD(void const * argument)
       * 동일한 상태에서는 같은 조도 Event가
       * 반복해서 큐에 들어가지 않는다.
       */
-      previous_light_state =
-          current_light_state;
+      previous_light_state = current_light_state;
     }
 
 
@@ -1869,178 +1863,212 @@ void StartTaskCAN(void const * argument)
 
 
   /*
-   * 실제 CAN으로 전송할 데이터 배열
+   * 각 센서 Task가 QueueCAN에 등록한
+   * CAN 송신 요청을 저장할 구조체
    *
-   * 현재는 CAN 모듈이 연결되지 않았으므로
-   * UART를 통해 데이터 구성을 확인한다.
+   * 포함 정보:
+   * - 수신 노드 ID
+   * - Command
+   * - Value
+   */
+  CanTxMessage_t tx_message;
+
+
+  /*
+   * STM32F103 bxCAN 송신 Header
+   *
+   * 현재 프로젝트는 FDCAN이 아니라
+   * Classic bxCAN을 사용한다.
+   */
+  CAN_TxHeaderTypeDef txHeader = {0, };
+
+
+  /*
+   * CAN 송신에 사용된 Mailbox 번호를 저장한다.
+   *
+   * STM32 bxCAN에는 송신 Mailbox가 3개 존재한다.
+   */
+  uint32_t txMailbox = 0U;
+
+
+  /*
+   * 실제 CAN으로 송신할 8바이트 Payload
+   *
+   * Data[0]   = Command
+   * Data[1]   = Value
+   * Data[2~7] = Padding
    */
   uint8_t txData[8] = {0, };
 
 
   /*
-   * 실제 CAN 연결 후 사용할 변수
+   * CAN Header의 공통 설정
    *
-   * 현재는 사용하지 않으므로 주석 처리한다.
+   * StdId는 수신 메시지마다 목적지가 다를 수 있으므로
+   * 큐에서 메시지를 꺼낸 뒤 설정한다.
    */
-  // CAN_TxHeaderTypeDef txHeader;
-  // uint32_t txMailbox;
-
-
-  /*
-   * CAN 연결 후 사용할 송신 헤더 설정
-   */
-  /*
-  txHeader.StdId = 0x101;
-  txHeader.RTR = CAN_RTR_DATA;
-  txHeader.IDE = CAN_ID_STD;
-  txHeader.DLC = 8;
+  txHeader.IDE = CAN_ID_STD;           // Standard 11-bit Identifier
+  txHeader.RTR = CAN_RTR_DATA;         // Data Frame
+  txHeader.DLC = 8U;                   // Payload 8 Bytes
   txHeader.TransmitGlobalTime = DISABLE;
-  */
 
 
-  /* Infinite loop */
   for (;;)
   {
     /*
-     * TaskLD에서 생성한 CAN 명령을 읽는다.
+     * 1. QueueCAN에서 CAN 송신 요청을 기다린다.
      *
-     * TaskCAN에서는 조도 조건을 다시 판단하지 않는다.
-     */
-    Node1CanCommand_t light_command = g_light_can_command;
-    Node1CanCommand_t front_command = g_front_can_command;
-    Node1CanCommand_t rear_command  = g_rear_can_command;
-
-    Node1CanCommand_t temperature_command = g_temperature_can_command;
-
-    Node1CanCommand_t light_command = g_light_can_command;
-
-    Node1CanCommand_t front_command = g_front_can_command;
-
-    Node1CanCommand_t rear_command = g_rear_can_command;
-
-
-    /*
-     * 실제 CAN 데이터 패킷 구성
+     * portMAX_DELAY:
+     * 큐에 메시지가 들어올 때까지 TaskCAN을 Block 상태로 둔다.
      *
-     * 현재는 첫 번째 바이트에
-     * 조도 제어 명령을 저장한다.
+     * 따라서 기존처럼 500ms마다 전역 변수를 확인하지 않고,
+     * Event가 발생했을 때 즉시 TaskCAN이 깨어난다.
      */
-    txData[0] = (uint8_t)temperature_command;
-    txData[1] = (uint8_t)light_command;
-    txData[2] = (uint8_t)front_command;
-    txData[3] = (uint8_t)rear_command;
-    txData[4] = 0;
-    txData[5] = 0;
-    txData[6] = 0;
-    txData[7] = 0;
-
-
-    /*
-     * UART 확인 출력
-     *
-     * TaskLD에서 계산된 센서값과
-     * 실제 CAN으로 보낼 명령 및 데이터를 확인한다.
-     */
-     /*
-    printf("[CAN CHECK] "
-          "LIGHT_CMD=%3u FRONT_CMD=%3u REAR_CMD=%3u | "
-          "TX=[%3u %3u %3u %3u %3u %3u %3u %3u] | "
-          "LIGHT_STATE=%u FRONT_STATE=%u REAR_STATE=%u | "
-          "DIST_F=%3ucm DIST_R=%3ucm | "
-          "FW_RAW=%4u OH_RAW=%4u | "
-          "FW_FILT=%4u OH_FILT=%4u | "
-          "FW_DELTA=%5d OH_DELTA=%5d\r\n",
-
-          (unsigned int)light_command,
-          (unsigned int)front_command,
-          (unsigned int)rear_command,
-
-          (unsigned int)txData[0],
-          (unsigned int)txData[1],
-          (unsigned int)txData[2],
-          (unsigned int)txData[3],
-          (unsigned int)txData[4],
-          (unsigned int)txData[5],
-          (unsigned int)txData[6],
-          (unsigned int)txData[7],
-
-          (unsigned int)g_light_state,
-          (unsigned int)g_front_ultrasonic_state,
-          (unsigned int)g_rear_ultrasonic_state,
-
-          (unsigned int)Distance_Front,
-          (unsigned int)Distance_Back,
-
-          (unsigned int)g_auto_light.forward.raw,
-          (unsigned int)g_auto_light.overhead.raw,
-
-          (unsigned int)g_auto_light.forward.filtered,
-          (unsigned int)g_auto_light.overhead.filtered,
-
-          (int)g_auto_light.forward.delta,
-          (int)g_auto_light.overhead.delta);
-    */
-
-
-    /*
-    * 초음파 Task UART 확인용 임시 출력
-    *
-    * 전방·후방 거리값
-    * 거리 판단 상태
-    * 생성된 CAN 명령만 확인한다.
-    */
-    // printf("[ULTRASONIC CHECK] "
-    //       "FRONT=%3ucm STATE=%u CMD=%3u | "
-    //       "REAR=%3ucm STATE=%u CMD=%3u\r\n",
-
-    //       (unsigned int)Distance_Front,
-    //       (unsigned int)g_front_ultrasonic_state,
-    //       (unsigned int)g_front_can_command,
-
-    //       (unsigned int)Distance_Back,
-    //       (unsigned int)g_rear_ultrasonic_state,
-    //       (unsigned int)g_rear_can_command);
-
-    /*
-     * 실제 CAN 모듈 연결 후 사용할 송신 코드
-     */
-    /*
-    if (light_command != CAN_CMD_NONE)
+    if (xQueueReceive(QueueCANHandle,
+                      &tx_message,
+                      portMAX_DELAY) != pdPASS)
     {
-      HAL_CAN_AddTxMessage(&hcan,
-                           &txHeader,
-                           txData,
-                           &txMailbox);
+      /*
+       * 정상적으로는 portMAX_DELAY를 사용하므로
+       * 이 조건에 들어오지 않는다.
+       */
+      continue;
     }
-    */
+
 
     /*
-    * TMP36 온도센서 UART 확인
-    *
-    * 모든 온도 계산은 TaskTP에서 수행하고,
-    * TaskCAN에서는 결과만 출력한다.
-    */
-    printf("[TEMP CHECK] "
-          "RAW=%4u FILT=%4u | "
-          "VOLT=%.3fV TEMP=%.1f degC | "
-          "STATE=%u CMD=%3u | "
-          "WARN=%.1f degC NORMAL=%.1f degC\r\n",
+     * 2. 수신 노드 ID 유효성 확인
+     *
+     * Standard CAN Identifier는 11비트이므로
+     * 사용할 수 있는 범위는 0x000~0x7FF이다.
+     */
+    if (tx_message.destination_id > 0x7FFU)
+    {
+      /*
+       * 잘못된 Identifier는 CAN으로 송신하지 않는다.
+       *
+       * UART 출력은 TaskCAN에서만 수행한다.
+       */
+      printf("[CAN TX ERROR] Invalid ID=0x%03X\r\n",
+             (unsigned int)tx_message.destination_id);
 
-          (unsigned int)g_auto_light.tp.raw,
-          (unsigned int)g_auto_light.tp.filtered_raw,
-
-          (double)g_auto_light.tp.voltage,
-          (double)g_auto_light.tp.temperature,
-
-          (unsigned int)g_temperature_state,
-          (unsigned int)temperature_command,
-
-          (double)TEMP_WARNING_THRESHOLD,
-          (double)TEMP_NORMAL_THRESHOLD);
+      continue;
+    }
 
 
-    osDelay(500);
+    /*
+     * 3. CAN Header의 Identifier 설정
+     *
+     * 현재 통신 규칙:
+     * Identifier = 수신 노드 ID
+     *
+     * 예:
+     * Node_2 대상 메시지 → StdId = 0x003
+     */
+    txHeader.StdId =
+        tx_message.destination_id;
+
+
+    /*
+     * 4. Payload 초기화
+     *
+     * 이전 송신 데이터가 남지 않도록
+     * 모든 바이트를 0으로 초기화한다.
+     */
+    txData[0] = 0U;
+    txData[1] = 0U;
+    txData[2] = 0U;
+    txData[3] = 0U;
+    txData[4] = 0U;
+    txData[5] = 0U;
+    txData[6] = 0U;
+    txData[7] = 0U;
+
+
+    /*
+     * 5. Payload 패킹
+     *
+     * 확정된 데이터 구조:
+     *
+     * Data[0]   = Command
+     * Data[1]   = Value
+     * Data[2~7] = Padding 0
+     */
+    txData[0] =
+        tx_message.command;
+
+    txData[1] =
+        tx_message.value;
+
+
+    /*
+     * 6. 사용할 수 있는 CAN 송신 Mailbox가 생길 때까지 대기
+     *
+     * TaskCAN만 CAN 송신을 담당하지만,
+     * 이전 메시지가 아직 Mailbox에 남아 있을 수 있으므로
+     * 여유 Mailbox가 있는지 확인한다.
+     */
+    while (HAL_CAN_GetTxMailboxesFreeLevel(&hcan) == 0U)
+    {
+      /*
+       * 다른 Task가 실행될 수 있도록
+       * 1ms 동안 Block 상태로 전환한다.
+       */
+      osDelay(1);
+    }
+
+
+    /*
+     * 7. 실제 CAN 메시지 송신 요청
+     *
+     * 이 함수는 메시지를 bxCAN 송신 Mailbox에 등록한다.
+     */
+    if (HAL_CAN_AddTxMessage(&hcan,
+                             &txHeader,
+                             txData,
+                             &txMailbox) == HAL_OK)
+    {
+      /*
+       * CAN 송신 요청 성공 확인
+       *
+       * 모든 UART 확인 출력은 TaskCAN에서만 수행한다.
+       */
+      printf("[CAN TX] "
+             "ID=0x%03X CMD=%3u VALUE=%3u | "
+             "DATA=[%02X %02X %02X %02X "
+             "%02X %02X %02X %02X]\r\n",
+
+             (unsigned int)txHeader.StdId,
+             (unsigned int)txData[0],
+             (unsigned int)txData[1],
+
+             (unsigned int)txData[0],
+             (unsigned int)txData[1],
+             (unsigned int)txData[2],
+             (unsigned int)txData[3],
+             (unsigned int)txData[4],
+             (unsigned int)txData[5],
+             (unsigned int)txData[6],
+             (unsigned int)txData[7]);
+    }
+    else
+    {
+      /*
+       * CAN Mailbox 등록 실패
+       *
+       * 현재 단계에서는 실패 사실을 UART로 확인한다.
+       * 센서 Task에서는 CAN 오류를 처리하지 않는다.
+       */
+      printf("[CAN TX FAIL] "
+             "ID=0x%03X CMD=%3u VALUE=%3u\r\n",
+
+             (unsigned int)txHeader.StdId,
+             (unsigned int)txData[0],
+             (unsigned int)txData[1]);
+    }
   }
+
+
 
   /* USER CODE END StartTaskCAN */
 }
