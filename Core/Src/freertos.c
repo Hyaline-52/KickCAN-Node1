@@ -338,29 +338,10 @@ volatile TemperatureState_t g_temperature_state = TEMP_STATE_NORMAL;
 
 
 /*
- * TaskTP에서 생성한 온도 CAN 명령
- *
- * 110: 온도 경고
- * 111: 온도 정상 복귀
- */
-volatile Node1CanCommand_t g_temperature_can_command = CAN_CMD_NONE;
-
-
-/*
  * TaskLD에서 판단한 현재 라이트 상태
  */
 volatile LightState_t g_light_state = LIGHT_STATE_OFF;
 
-
-/*
- * TaskLD에서 생성한 CAN 명령
- *
- * CAN_CMD_NONE:
- * 현재 새롭게 전송할 명령이 없음
- *
- * 이후 TaskCAN에서 이 값을 읽어 CAN 메시지로 전송할 예정이다.
- */
-volatile Node1CanCommand_t g_light_can_command = CAN_CMD_NONE;
 
 /*
  * 전방·후방 초음파 현재 상태
@@ -370,19 +351,7 @@ volatile UltrasonicState_t g_front_ultrasonic_state =
 
 volatile UltrasonicState_t g_rear_ultrasonic_state =
     ULTRASONIC_STATE_CLEAR;
-
-
-/*
- * 초음파 Task에서 생성한 CAN 명령
- *
- * TaskHC1:
- * 전방 명령 115, 116, 117, 121
- *
- * TaskHC2:
- * 후방 명령 118, 119, 120, 122
- */
-volatile Node1CanCommand_t g_front_can_command = CAN_CMD_NONE;
-volatile Node1CanCommand_t g_rear_can_command  = CAN_CMD_NONE;
+    
 
 /* USER CODE END Variables */
 osThreadId TaskTPHandle;
