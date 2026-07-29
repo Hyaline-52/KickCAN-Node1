@@ -37,6 +37,45 @@ extern "C" {
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
 
+
+/*
+ * Main Node에서 수신하는 차량 주행 상태
+ *
+ * 제어명령 60번의 Value에 따라
+ * Node_1 내부의 현재 주행 상태를 저장한다.
+ *
+ * 이 상태는 Node_1이 다시 송신하는 데이터가 아니며,
+ * 초음파 Event 송신 방향을 결정하는 조건으로만 사용한다.
+ */
+typedef enum
+{
+    /*
+     * 정지 상태
+     *
+     * 전방·후방 초음파 측정은 계속하지만
+     * 초음파 Event는 CAN으로 송신하지 않는다.
+     */
+    DRIVE_STATE_STOP = 0,
+
+    /*
+     * 후진 상태
+     *
+     * 후방 초음파 Event와
+     * 후방 경고 해제 Event만 송신한다.
+     */
+    DRIVE_STATE_BACKWARD = 1,
+
+    /*
+     * 전진 상태
+     *
+     * 전방 초음파 Event와
+     * 전방 경고 해제 Event만 송신한다.
+     */
+    DRIVE_STATE_FORWARD = 2
+
+} DriveState_t;
+
+
 /* USER CODE END ET */
 
 /* Exported constants --------------------------------------------------------*/

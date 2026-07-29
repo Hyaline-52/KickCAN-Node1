@@ -288,10 +288,23 @@ typedef struct
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
 
-// main.c에 선언된 거리 변수 및 us delay 함수 참조
+/*
+ * main.c에 선언된 거리 변수 및 us delay 함수 참조
+ */
 extern volatile uint16_t Distance_Front;
 extern volatile uint16_t Distance_Back;
 extern void delay_us(uint16_t us);
+
+
+/*
+ * Main Node에서 수신한 현재 차량 주행 상태
+ *
+ * main.c의 CAN 수신 콜백에서 값이 변경되며,
+ * TaskHC1과 TaskHC2에서는 이 값을 읽기만 한다.
+ *
+ * Node_1이 이 주행 상태를 다시 송신하는 것은 아니다.
+ */
+extern volatile DriveState_t g_drive_state;
 
 
 // PA0(LS1), PA1(LS2), PA4(TP) 센서 값이 저장될 DMA 버퍼

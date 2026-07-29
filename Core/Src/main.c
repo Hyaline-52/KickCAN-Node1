@@ -63,6 +63,23 @@ volatile uint16_t Distance_Back = 0;
 // freertos.c에 선언된 3채널 ADC 버퍼 참조[cite: 4, 10]
 extern uint16_t adc_dma_buff[3];
 
+/*
+ * Main Node에서 수신한 현재 차량 주행 상태
+ *
+ * 초기값은 정지 상태로 설정한다.
+ *
+ * Main Node의 60번 명령을 아직 받지 않았거나
+ * CAN 통신이 연결되지 않은 상태에서
+ * 초음파 Event가 임의로 송신되는 것을 방지한다.
+ *
+ * 이 변수는:
+ * - main.c의 CAN 수신 콜백에서 갱신
+ * - freertos.c의 초음파 Task에서 참조
+ *
+ * 용도로 사용한다.
+ */
+volatile DriveState_t g_drive_state = DRIVE_STATE_STOP;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
