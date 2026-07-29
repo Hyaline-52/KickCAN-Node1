@@ -55,8 +55,8 @@ void MX_CAN_Init(void)
   }
   /* USER CODE BEGIN CAN_Init 2 */
 
-  hcan.Init.AutoRetransmission = DISABLE;
-  // hcan.Init.AutoRetransmission = ENABLE;
+  // hcan.Init.AutoRetransmission = DISABLE; //테스트용
+  hcan.Init.AutoRetransmission = ENABLE;
 
   /* USER CODE END CAN_Init 2 */
 
