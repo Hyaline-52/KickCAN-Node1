@@ -1536,11 +1536,9 @@ void StartTaskLD(void const * argument)
      * 양수: ADC값 감소 → 어두워짐
      * 음수: ADC값 증가 → 밝아짐
      */
-    int16_t fw_raw_delta =
-        (int16_t)prev_fw_raw - (int16_t)raw_fw;
+    int16_t fw_raw_delta = (int16_t)prev_fw_raw - (int16_t)raw_fw;
 
-    int16_t oh_raw_delta =
-        (int16_t)prev_oh_raw - (int16_t)raw_oh;
+    int16_t oh_raw_delta = (int16_t)prev_oh_raw - (int16_t)raw_oh;
 
 
     /*
@@ -1571,12 +1569,10 @@ void StartTaskLD(void const * argument)
      * 음수: ADC값 증가 → 밝아짐
      */
     g_auto_light.forward.delta =
-        (int16_t)prev_fw_filt -
-        (int16_t)g_auto_light.forward.filtered;
+        (int16_t)prev_fw_filt - (int16_t)g_auto_light.forward.filtered;
 
     g_auto_light.overhead.delta =
-        (int16_t)prev_oh_filt -
-        (int16_t)g_auto_light.overhead.filtered;
+        (int16_t)prev_oh_filt - (int16_t)g_auto_light.overhead.filtered;
 
 
     /*
@@ -1592,11 +1588,9 @@ void StartTaskLD(void const * argument)
     /*
      * 8. 현재 필터값을 밝음/전환/어두움 단계로 변환
      */
-    LightLevel_t forward_level =
-        GetLightLevel(g_auto_light.forward.filtered);
+    LightLevel_t forward_level = GetLightLevel(g_auto_light.forward.filtered);
 
-    LightLevel_t overhead_level =
-        GetLightLevel(g_auto_light.overhead.filtered);
+    LightLevel_t overhead_level = GetLightLevel(g_auto_light.overhead.filtered);
 
 
     /*
@@ -1718,44 +1712,139 @@ void StartTaskLD(void const * argument)
 
 
     /*
-     * 10. 라이트 상태가 바뀌었을 때만
-     *     CAN 명령값을 생성한다.
-     *
-     * 아직 여기서는 CAN으로 직접 전송하지 않는다.
-     */
+    * 10. 라이트 상태가 바뀌었을 때만
+    *     조도 Event를 QueueCAN에 등록한다.
+    *
+    * TaskLD에서는 실제 CAN 송신을 하지 않는다.
+    *
+    * 이 Task에서는:
+    * - 수신 노드 ID
+    * - Command
+    * - Value
+    *
+    * 만 설정한다.
+    *
+    * CAN Header 구성, Payload 패킹 및 실제 송신은
+    * TaskCAN에서만 수행한다.
+    */
     if (current_light_state != previous_light_state)
     {
+      /*
+      * TaskCAN으로 전달할 조도 Event 메시지
+      */
+      CanTxMessage_t light_message;
+
+
+      /*
+      * Node_1의 조도 Event는
+      * Node_2(ID 3)로 전송한다.
+      *
+      * TaskCAN에서는 이 값을
+      * CAN Header의 Standard Identifier로 사용한다.
+      */
+      light_message.destination_id =
+          CAN_NODE2_ID;
+
+
+      /*
+      * 현재 라이트 상태에 따라
+      * Command와 Value를 설정한다.
+      */
       switch (current_light_state)
       {
         case LIGHT_STATE_FAST_ON:
-          g_light_can_command = CAN_CMD_LIGHT_FAST_ON;
+
+          /*
+          * 빠른 라이트 점등 Event
+          *
+          * 터널 진입 등 급격한 조도 변화 시 사용한다.
+          *
+          * Command = 112
+          * Value   = 2
+          *
+          * 최종 Payload:
+          * [70 02 00 00 00 00 00 00]
+          */
+          light_message.command =
+              (uint8_t)CAN_CMD_LIGHT_FAST_ON;
+
+          light_message.value = 2U;
           break;
+
 
         case LIGHT_STATE_SMOOTH_ON:
-          g_light_can_command = CAN_CMD_LIGHT_SMOOTH_ON;
+
+          /*
+          * 자연스러운 라이트 점등 Event
+          *
+          * 일몰 또는 야간 진입 시 사용한다.
+          *
+          * Command = 113
+          * Value   = 1
+          *
+          * 최종 Payload:
+          * [71 01 00 00 00 00 00 00]
+          */
+          light_message.command =
+              (uint8_t)CAN_CMD_LIGHT_SMOOTH_ON;
+
+          light_message.value = 1U;
           break;
+
 
         case LIGHT_STATE_OFF:
-          g_light_can_command = CAN_CMD_LIGHT_OFF;
-          break;
-
         default:
-          g_light_can_command = CAN_CMD_NONE;
+
+          /*
+          * 라이트 해제 Event
+          *
+          * 밝은 환경으로 복귀했을 때 사용한다.
+          *
+          * Command = 114
+          * Value   = 0
+          *
+          * 최종 Payload:
+          * [72 00 00 00 00 00 00 00]
+          */
+          light_message.command =
+              (uint8_t)CAN_CMD_LIGHT_OFF;
+
+          light_message.value = 0U;
           break;
       }
 
 
       /*
-       * 외부에서 현재 라이트 상태를 확인할 수 있도록 저장
-       */
-      g_light_state = current_light_state;
+      * 조도 Event를 CAN 송신 큐에 등록한다.
+      *
+      * 여기에서는 CAN 송신을 직접 수행하지 않는다.
+      * TaskCAN이 큐에서 메시지를 꺼내 송신한다.
+      *
+      * 큐가 가득 찬 경우에는
+      * 공간이 생길 때까지 대기한다.
+      */
+      xQueueSend(QueueCANHandle,
+                &light_message,
+                portMAX_DELAY);
 
 
       /*
-       * 이번 상태를 다음 비교 기준으로 저장
-       */
-      previous_light_state = current_light_state;
+      * 외부 확인용 현재 라이트 상태 저장
+      *
+      * UART 확인 및 디버깅을 위해 유지한다.
+      */
+      g_light_state =
+          current_light_state;
 
+
+      /*
+      * 다음 상태 비교를 위해 현재 상태 저장
+      *
+      * 동일한 상태에서는 같은 조도 Event가
+      * 반복해서 큐에 들어가지 않는다.
+      */
+      previous_light_state =
+          current_light_state;
     }
 
 
