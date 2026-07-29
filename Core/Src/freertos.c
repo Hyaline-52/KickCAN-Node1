@@ -29,6 +29,7 @@
 #include "can.h"   // hcan 핸들 사용
 #include "usart.h" // huart2 핸들 사용
 #include <stdio.h> // printf 출력을 위한 헤더
+#include "queue.h"   // FreeRTOS 구조체 큐 사용
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -65,6 +66,42 @@ typedef enum
     CAN_CMD_REAR_CLEAR         = 122
 
 } Node1CanCommand_t;
+
+/*
+ * CAN 송신 큐에 저장할 메시지
+ *
+ * 각 센서 Task는 센서 상태를 판단한 뒤
+ * 실제 CAN 송신에 필요한 정보만 이 구조체에 담아
+ * QueueCAN으로 전달한다.
+ *
+ * 실제 CAN Header 구성, Payload 패킹 및 송신은
+ * TaskCAN에서만 수행한다.
+ */
+typedef struct
+{
+    /*
+     * CAN Header의 Standard Identifier로 사용할 수신 노드 ID
+     *
+     * 현재 Node_1에서 발생한 Event는
+     * Node_2로 전송하므로 기본 목적지는 0x003이다.
+     */
+    uint16_t destination_id;
+
+    /*
+     * CAN Payload의 Data[0]에 저장할 제어 명령
+     *
+     * 예:
+     * 110 = 온도 경고
+     * 115 = 전방 30cm 경고
+     */
+    uint8_t command;
+
+    /*
+     * CAN Payload의 Data[1]에 저장할 실제 상태값
+     */
+    uint8_t value;
+
+} CanTxMessage_t;
 
 
 /*
@@ -333,7 +370,14 @@ osThreadId TaskHC1Handle;
 osThreadId TaskHC2Handle;
 osThreadId TaskLDHandle;
 osThreadId TaskCANHandle;
-osMessageQId QueueCANHandle;
+
+/*
+ * CAN 송신 메시지를 저장할 FreeRTOS 큐 핸들
+ *
+ * 큐 하나의 항목에는
+ * CanTxMessage_t 구조체 전체가 저장된다.
+ */
+QueueHandle_t QueueCANHandle;
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -392,11 +436,43 @@ void MX_FREERTOS_Init(void) {
 
   /* Create the queue(s) */
   /* definition and creation of QueueCAN */
-  osMessageQDef(QueueCAN, 16, uint32_t);
-  QueueCANHandle = osMessageCreate(osMessageQ(QueueCAN), NULL);
 
   /* USER CODE BEGIN RTOS_QUEUES */
-  /* add queues, ... */
+
+  /* Create the queue(s) */
+
+  /*
+  * CAN 송신 큐 생성
+  *
+  * 큐 길이:
+  * 최대 16개의 CAN 송신 요청을 대기시킬 수 있다.
+  *
+  * 큐 항목 크기:
+  * CanTxMessage_t 구조체 하나의 크기
+  *
+  * 센서 Task는 이 큐에
+  * 수신 노드 ID, Command, Value를 저장한다.
+  *
+  * TaskCAN은 큐에서 메시지를 하나씩 꺼내
+  * 실제 CAN Header와 Payload를 구성한다.
+  */
+  QueueCANHandle =
+      xQueueCreate(16, sizeof(CanTxMessage_t));
+
+
+  /*
+  * 큐 생성 실패 확인
+  *
+  * 메모리 부족 등의 이유로 큐가 생성되지 않으면
+  * 더 이상 정상적인 CAN 송신이 불가능하므로
+  * Error_Handler로 진입한다.
+  */
+  if (QueueCANHandle == NULL)
+  {
+      Error_Handler();
+  }
+  
+
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
