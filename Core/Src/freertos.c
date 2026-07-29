@@ -110,8 +110,8 @@ typedef struct
 typedef enum
 {
     LIGHT_LEVEL_DARK = 0,       // ADC 1000 이하
-    LIGHT_LEVEL_TRANSITION,     // ADC 1001 ~ 2899
-    LIGHT_LEVEL_BRIGHT          // ADC 2900 이상
+    LIGHT_LEVEL_TRANSITION,     // ADC 1001 ~ 2499
+    LIGHT_LEVEL_BRIGHT          // ADC 2500 이상
 
 } LightLevel_t;
 
@@ -210,7 +210,7 @@ typedef struct
  * 조도센서 ADC 기준값
  *
  * 실제 측정 결과:
- * 밝은 환경: 약 2900 이상
+ * 밝은 환경: 약 2500 이상
  * 어두운 환경: 약 1000 이하
  */
 #define LIGHT_BRIGHT_THRESHOLD           2500U
@@ -315,7 +315,7 @@ extern volatile DriveState_t g_drive_state;
 
 
 // PA0(LS1), PA1(LS2), PA4(TP) 센서 값이 저장될 DMA 버퍼
-uint16_t adc_dma_buff[3] = {0, };
+volatile uint16_t adc_dma_buff[3] = {0, };
 
 
 // 전체 센서값 관리 구조체
@@ -351,7 +351,7 @@ volatile UltrasonicState_t g_front_ultrasonic_state =
 
 volatile UltrasonicState_t g_rear_ultrasonic_state =
     ULTRASONIC_STATE_CLEAR;
-    
+
 
 /* USER CODE END Variables */
 osThreadId TaskTPHandle;
@@ -1430,7 +1430,6 @@ void StartTaskLD(void const * argument)
    * 이전 센서값
    */
   uint16_t prev_fw_raw = 0;
-  uint16_t prev_oh_raw = 0;
 
   uint16_t prev_fw_filt = 0;
   uint16_t prev_oh_filt = 0;
@@ -1487,7 +1486,6 @@ void StartTaskLD(void const * argument)
       g_auto_light.overhead.delta = 0;
 
       prev_fw_raw = raw_fw;
-      prev_oh_raw = raw_oh;
 
       prev_fw_filt = raw_fw;
       prev_oh_filt = raw_oh;
@@ -1506,8 +1504,6 @@ void StartTaskLD(void const * argument)
      * 음수: ADC값 증가 → 밝아짐
      */
     int16_t fw_raw_delta = (int16_t)prev_fw_raw - (int16_t)raw_fw;
-
-    int16_t oh_raw_delta = (int16_t)prev_oh_raw - (int16_t)raw_oh;
 
 
     /*
@@ -1548,7 +1544,6 @@ void StartTaskLD(void const * argument)
      * 7. 다음 주기 계산을 위해 현재값 저장
      */
     prev_fw_raw = raw_fw;
-    prev_oh_raw = raw_oh;
 
     prev_fw_filt = g_auto_light.forward.filtered;
     prev_oh_filt = g_auto_light.overhead.filtered;
@@ -1567,7 +1562,7 @@ void StartTaskLD(void const * argument)
      *
      * 조건:
      * - 전방 raw 값이 1000 이하
-     * - 상공 raw 값이 2900 이상
+     * - 상공 raw 값이 2500 이상
      * - 전방 raw 값이 한 주기 동안 1200 이상 급격히 감소
      *
      * 결과:
@@ -1646,7 +1641,7 @@ void StartTaskLD(void const * argument)
     /*
      * 9-4. 밝은 환경 복귀 판단
      *
-     * 전방과 상공 센서 모두 2900 이상인 상태가
+     * 전방과 상공 센서 모두 2500 이상인 상태가
      * 약 500ms 지속되면 라이트를 해제한다.
      */
     else if ((forward_level == LIGHT_LEVEL_BRIGHT) &&

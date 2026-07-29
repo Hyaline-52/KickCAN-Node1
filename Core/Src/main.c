@@ -80,7 +80,7 @@ volatile uint8_t Is_First_Captured2 = 0;
 volatile uint16_t Distance_Back = 0;
 
 // freertos.c에 선언된 3채널 ADC 버퍼 참조[cite: 4, 10]
-extern uint16_t adc_dma_buff[3];
+extern volatile uint16_t adc_dma_buff[3];
 
 /*
  * Main Node에서 수신한 현재 차량 주행 상태
