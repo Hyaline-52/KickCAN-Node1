@@ -346,30 +346,41 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan_ptr)
 
 
   /*
-   * Data[1]의 Value를 현재 주행 상태로 저장
-   *
-   * 0 = 정지
-   * 1 = 후진
-   * 2 = 전진
-   *
-   * 이 상태값은 Node_1이 다시 CAN으로 송신하지 않는다.
-   * TaskHC1과 TaskHC2의 초음파 Event 송신 조건으로만 사용한다.
-   */
+  * Data[1]의 Value를 현재 주행 상태로 저장
+  *
+  * 제어명령 60번의 ICD 정의:
+  * 0 = 전진
+  * 1 = 후진
+  * 2 = 정지
+  *
+  * 이 상태값은 Node_1이 다시 송신하지 않는다.
+  * 전방 또는 후방 초음파 Event의 송신 여부를
+  * 결정하는 조건값으로만 사용한다.
+  */
   switch (rxData[1])
   {
-    case DRIVE_STATE_STOP:
-      g_drive_state = DRIVE_STATE_STOP;
-      break;
-
-
-    case DRIVE_STATE_BACKWARD:
-      g_drive_state = DRIVE_STATE_BACKWARD;
-      break;
-
-
+    /*
+     * 전진 상태
+     */
     case DRIVE_STATE_FORWARD:
-      g_drive_state = DRIVE_STATE_FORWARD;
-      break;
+        g_drive_state = DRIVE_STATE_FORWARD;
+        break;
+
+
+    /*
+     * 후진 상태
+     */
+    case DRIVE_STATE_BACKWARD:
+        g_drive_state = DRIVE_STATE_BACKWARD;
+        break;
+
+
+    /*
+     * 정지 상태
+     */
+    case DRIVE_STATE_STOP:
+        g_drive_state = DRIVE_STATE_STOP;
+        break;
 
 
     default:

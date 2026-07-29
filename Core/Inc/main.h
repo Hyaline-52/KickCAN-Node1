@@ -50,12 +50,12 @@ extern "C" {
 typedef enum
 {
     /*
-     * 정지 상태
+     * 전진 상태
      *
-     * 전방·후방 초음파 측정은 계속하지만
-     * 초음파 Event는 CAN으로 송신하지 않는다.
+     * 전방 초음파 Event와
+     * 전방 경고 해제 Event만 송신한다.
      */
-    DRIVE_STATE_STOP = 0,
+    DRIVE_STATE_FORWARD = 0,
 
     /*
      * 후진 상태
@@ -66,12 +66,12 @@ typedef enum
     DRIVE_STATE_BACKWARD = 1,
 
     /*
-     * 전진 상태
+     * 정지 상태
      *
-     * 전방 초음파 Event와
-     * 전방 경고 해제 Event만 송신한다.
+     * 전방·후방 초음파는 계속 측정하지만
+     * 초음파 Event를 송신하지 않는다.
      */
-    DRIVE_STATE_FORWARD = 2
+    DRIVE_STATE_STOP = 2
 
 } DriveState_t;
 
