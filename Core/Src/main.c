@@ -39,6 +39,25 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
+/*
+ * Node_1의 CAN 수신 Identifier
+ *
+ * CAN Identifier는 수신 노드 ID로 사용한다.
+ * 따라서 Main Node가 Node_1으로 보내는 메시지는
+ * Standard ID 0x002를 사용한다.
+ */
+#define CAN_NODE1_ID              0x002U
+
+
+/*
+ * 차량 전진·후진·정지 상태 제어명령
+ *
+ * Main Node에서 수신하며,
+ * Node_1에서는 초음파 Event 송신 방향을
+ * 결정하는 조건값으로만 사용한다.
+ */
+#define CAN_CMD_DRIVE_STATE       60U
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -229,18 +248,138 @@ void SystemClock_Config(void)
 
 /* USER CODE BEGIN 4 */
 
-// ---------------- [CAN 수신 콜백 함수 (FIFO 0)] ----------------[cite: 5, 6]
+/*
+ * CAN 수신 콜백 함수
+ *
+ * Main Node에서 Node_1으로 전송한
+ * 주행 상태 제어명령 60번을 수신한다.
+ *
+ * 이 콜백에서는:
+ * - 수신 메시지 확인
+ * - 주행 상태 저장
+ *
+ * 까지만 수행한다.
+ *
+ * 초음파 판단, CAN 송신 큐 등록 및 UART 출력은
+ * 이 인터럽트 콜백에서 수행하지 않는다.
+ */
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan_ptr)
 {
   CAN_RxHeaderTypeDef rxHeader;
-  uint8_t rxData[8];
+  uint8_t rxData[8] = {0, };
 
-  if (hcan_ptr->Instance == CAN1)
+
+  /*
+   * CAN1에서 발생한 수신 인터럽트인지 확인
+   */
+  if (hcan_ptr->Instance != CAN1)
   {
-    if (HAL_CAN_GetRxMessage(hcan_ptr, CAN_RX_FIFO0, &rxHeader, rxData) == HAL_OK)
-    {
-      // CAN 데이터 수신 성공 처리 로직
-    }
+    return;
+  }
+
+
+  /*
+   * FIFO0에서 수신 메시지 읽기
+   *
+   * 메시지를 정상적으로 읽지 못한 경우에는
+   * 기존 주행 상태를 그대로 유지한다.
+   */
+  if (HAL_CAN_GetRxMessage(hcan_ptr,
+                           CAN_RX_FIFO0,
+                           &rxHeader,
+                           rxData) != HAL_OK)
+  {
+    return;
+  }
+
+
+  /*
+   * Standard ID Data Frame인지 확인
+   *
+   * 현재 통신 구조에서는:
+   * - Standard 11-bit Identifier
+   * - Data Frame
+   *
+   * 만 사용한다.
+   */
+  if ((rxHeader.IDE != CAN_ID_STD) ||
+      (rxHeader.RTR != CAN_RTR_DATA))
+  {
+    return;
+  }
+
+
+  /*
+   * 수신 노드 ID 확인
+   *
+   * Identifier는 수신 노드 ID이므로
+   * Node_1 대상인 0x002 메시지만 처리한다.
+   */
+  if (rxHeader.StdId != CAN_NODE1_ID)
+  {
+    return;
+  }
+
+
+  /*
+   * Command와 Value를 읽기 위해
+   * 최소 2바이트 이상 수신되었는지 확인한다.
+   *
+   * Data[0] = Command
+   * Data[1] = Value
+   */
+  if (rxHeader.DLC < 2U)
+  {
+    return;
+  }
+
+
+  /*
+   * 제어명령 60번인지 확인
+   *
+   * 다른 Command는 이번 수신 로직에서 처리하지 않는다.
+   */
+  if (rxData[0] != CAN_CMD_DRIVE_STATE)
+  {
+    return;
+  }
+
+
+  /*
+   * Data[1]의 Value를 현재 주행 상태로 저장
+   *
+   * 0 = 정지
+   * 1 = 후진
+   * 2 = 전진
+   *
+   * 이 상태값은 Node_1이 다시 CAN으로 송신하지 않는다.
+   * TaskHC1과 TaskHC2의 초음파 Event 송신 조건으로만 사용한다.
+   */
+  switch (rxData[1])
+  {
+    case DRIVE_STATE_STOP:
+      g_drive_state = DRIVE_STATE_STOP;
+      break;
+
+
+    case DRIVE_STATE_BACKWARD:
+      g_drive_state = DRIVE_STATE_BACKWARD;
+      break;
+
+
+    case DRIVE_STATE_FORWARD:
+      g_drive_state = DRIVE_STATE_FORWARD;
+      break;
+
+
+    default:
+
+      /*
+       * 정의되지 않은 Value가 들어온 경우
+       * 잘못된 상태로 변경하지 않고
+       * 기존 주행 상태를 그대로 유지한다.
+       */
+      break;
   }
 }
 
