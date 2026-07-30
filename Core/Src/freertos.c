@@ -195,8 +195,8 @@ typedef struct
  * 밝은 환경: 약 2000 이상
  * 어두운 환경: 약 1000 이하
  */
-#define LIGHT_BRIGHT_THRESHOLD           1700U
-#define LIGHT_DARK_THRESHOLD             900U
+#define LIGHT_BRIGHT_THRESHOLD           2000U
+#define LIGHT_DARK_THRESHOLD             1400U
 
 
 /*
