@@ -1,8 +1,8 @@
 {
 	"InstallScripts" : 
 	[
-		"C:/Users/KCCISTC/Documents/st_project/KickCan_Node1/Node_1/build/Debug/cmake_install.cmake",
-		"C:/Users/KCCISTC/Documents/st_project/KickCan_Node1/Node_1/build/Debug/cmake/stm32cubemx/cmake_install.cmake"
+		"D:/STM32_project/KickCan_Node1/Node_1/build/Debug/cmake_install.cmake",
+		"D:/STM32_project/KickCan_Node1/Node_1/build/Debug/cmake/stm32cubemx/cmake_install.cmake"
 	],
 	"Parallel" : false
 }

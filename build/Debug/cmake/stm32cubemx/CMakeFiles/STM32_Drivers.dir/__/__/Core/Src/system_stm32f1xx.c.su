@@ -1,2 +1,2 @@
-C:/Users/KCCISTC/Documents/st_project/KickCan_Node1/Node_1/Core/Src/system_stm32f1xx.c:175:6:SystemInit	4	static
-C:/Users/KCCISTC/Documents/st_project/KickCan_Node1/Node_1/Core/Src/system_stm32f1xx.c:224:6:SystemCoreClockUpdate	24	static
+D:/STM32_project/KickCan_Node1/Node_1/Core/Src/system_stm32f1xx.c:175:6:SystemInit	4	static
+D:/STM32_project/KickCan_Node1/Node_1/Core/Src/system_stm32f1xx.c:224:6:SystemCoreClockUpdate	24	static
