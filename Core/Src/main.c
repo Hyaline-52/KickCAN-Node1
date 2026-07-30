@@ -69,37 +69,6 @@
 
 /* USER CODE BEGIN PV */
 
-/*
- * CAN 테스트 수신 결과
- *
- * UART를 사용하지 않고 STM32CubeIDE의
- * Expressions 또는 Live Expressions에서 확인한다.
- */
-volatile uint32_t g_can_test_rx_id = 0U;
-volatile uint32_t g_can_test_rx_dlc = 0U;
-volatile uint32_t g_can_test_rx_ide = 0U;
-volatile uint32_t g_can_test_rx_rtr = 0U;
-
-volatile uint8_t g_can_test_rx_data[8] =
-{
-  0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U
-};
-
-/*
- * 모든 CAN 프레임 수신 횟수
- */
-volatile uint32_t g_can_test_rx_count = 0U;
-
-/*
- * Main의 테스트 ID 0x200 수신 횟수
- */
-volatile uint32_t g_can_test_main_rx_count = 0U;
-
-/*
- * HAL_CAN_GetRxMessage 실패 횟수
- */
-volatile uint32_t g_can_test_rx_error_count = 0U;
-
 
 // 전방 센서(HC01) 변수 (Echo: PA6 - TIM3_CH1)[cite: 13]
 volatile uint32_t IC_Value1_Front = 0;
@@ -186,7 +155,8 @@ int main(void)
   sFilterConfig.FilterBank = 0;
   sFilterConfig.FilterMode = CAN_FILTERMODE_IDMASK;
   sFilterConfig.FilterScale = CAN_FILTERSCALE_32BIT;
-  sFilterConfig.FilterIdHigh = 0x0002 << 5;
+  // sFilterConfig.FilterIdHigh = 0x0002 << 5;
+  sFilterConfig.FilterIdHigh = CAN_NODE1_ID << 5;
   sFilterConfig.FilterIdLow = 0x0000;
   sFilterConfig.FilterMaskIdHigh = 0x7ff << 5;
   sFilterConfig.FilterMaskIdLow = 0x0000;
@@ -326,198 +296,81 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan_ptr)
     }
 
 
+
+
     /*
-    * FIFO0에서 메시지 읽기
+    * FIFO0 메시지는 한 번만 읽는다.
     */
     if (HAL_CAN_GetRxMessage(hcan_ptr, CAN_RX_FIFO0, &rxHeader, rxData) != HAL_OK)
     {
-      g_can_test_rx_error_count++;
-
       return;
     }
 
 
     /*
-    * 수신 Header를 디버깅 변수에 저장
+    * Standard Data Frame만 처리한다.
     */
-    g_can_test_rx_ide = rxHeader.IDE;
-    g_can_test_rx_rtr = rxHeader.RTR;
-    g_can_test_rx_dlc = rxHeader.DLC;
-
-
-    /*
-    * Standard ID와 Extended ID 모두 확인 가능하도록 저장
-    */
-    if (rxHeader.IDE == CAN_ID_STD)
+    if ((rxHeader.IDE != CAN_ID_STD) || (rxHeader.RTR != CAN_RTR_DATA))
     {
-      g_can_test_rx_id = rxHeader.StdId;
-    }
-    else
-    {
-      g_can_test_rx_id = rxHeader.ExtId;
+      return;
     }
 
 
     /*
-    * 수신 Payload 전체 저장
+    * Node_1 대상 ID인지 확인한다.
     */
-    g_can_test_rx_data[0] = rxData[0];
-    g_can_test_rx_data[1] = rxData[1];
-    g_can_test_rx_data[2] = rxData[2];
-    g_can_test_rx_data[3] = rxData[3];
-    g_can_test_rx_data[4] = rxData[4];
-    g_can_test_rx_data[5] = rxData[5];
-    g_can_test_rx_data[6] = rxData[6];
-    g_can_test_rx_data[7] = rxData[7];
-
-
-    /*
-    * 전체 수신 횟수
-    *
-    * 데이터 복사가 끝난 뒤 마지막에 증가시킨다.
-    */
-    g_can_test_rx_count++;
-
-
-    /*
-    * Main Node 테스트 프레임 수신 횟수
-    */
-    if ((rxHeader.IDE == CAN_ID_STD) && (rxHeader.RTR == CAN_RTR_DATA) && (rxHeader.StdId == CAN_TEST_MAIN_TX_ID))
+    if (rxHeader.StdId != CAN_NODE1_ID)
     {
-      g_can_test_main_rx_count++;
+      return;
     }
 
 
+    /*
+    * Command와 Value가 존재하는지 확인한다.
+    */
+    if (rxHeader.DLC < 2U)
+    {
+      return;
+    }
 
 
-
-///////////////////////////////////////////////////////
-
-
-  // CAN_RxHeaderTypeDef rxHeader;
-  // uint8_t rxData[8] = {0, };
-
-
-  // /*
-  //  * CAN1에서 발생한 수신 인터럽트인지 확인
-  //  */
-  // if (hcan_ptr->Instance != CAN1)
-  // {
-  //   return;
-  // }
+    /*
+    * 주행 상태 Command 60만 처리한다.
+    */
+    if (rxData[0] != CAN_CMD_DRIVE_STATE)
+    {
+      return;
+    }
 
 
-  // /*
-  //  * FIFO0에서 수신 메시지 읽기
-  //  *
-  //  * 메시지를 정상적으로 읽지 못한 경우에는
-  //  * 기존 주행 상태를 그대로 유지한다.
-  //  */
-  // if (HAL_CAN_GetRxMessage(hcan_ptr, CAN_RX_FIFO0, &rxHeader, rxData) != HAL_OK)
-  // {
-  //   return;
-  // }
+    /*
+    * Data[1]:
+    * 0 = 전진
+    * 1 = 후진
+    * 2 = 정지
+    */
+    switch (rxData[1])
+    {
+      case DRIVE_STATE_FORWARD:
+        g_drive_state = DRIVE_STATE_FORWARD;
+        break;
 
+      case DRIVE_STATE_BACKWARD:
+        g_drive_state = DRIVE_STATE_BACKWARD;
+        break;
 
-  // /*
-  //  * Standard ID Data Frame인지 확인
-  //  *
-  //  * 현재 통신 구조에서는:
-  //  * - Standard 11-bit Identifier
-  //  * - Data Frame
-  //  *
-  //  * 만 사용한다.
-  //  */
-  // if ((rxHeader.IDE != CAN_ID_STD) ||
-  //     (rxHeader.RTR != CAN_RTR_DATA))
-  // {
-  //   return;
-  // }
+      case DRIVE_STATE_STOP:
+        g_drive_state = DRIVE_STATE_STOP;
+        break;
 
+      default:
+        /*
+        * 정의되지 않은 값이면
+        * 기존 주행 상태를 유지한다.
+        */
+        break;
+    }
 
-  // /*
-  //  * 수신 노드 ID 확인
-  //  *
-  //  * Identifier는 수신 노드 ID이므로
-  //  * Node_1 대상인 0x002 메시지만 처리한다.
-  //  */
-  // if (rxHeader.StdId != CAN_NODE1_ID)
-  // {
-  //   return;
-  // }
-
-
-  // /*
-  //  * Command와 Value를 읽기 위해
-  //  * 최소 2바이트 이상 수신되었는지 확인한다.
-  //  *
-  //  * Data[0] = Command
-  //  * Data[1] = Value
-  //  */
-  // if (rxHeader.DLC < 2U)
-  // {
-  //   return;
-  // }
-
-
-  // /*
-  //  * 제어명령 60번인지 확인
-  //  *
-  //  * 다른 Command는 이번 수신 로직에서 처리하지 않는다.
-  //  */
-  // if (rxData[0] != CAN_CMD_DRIVE_STATE)
-  // {
-  //   return;
-  // }
-
-
-  // /*
-  // * Data[1]의 Value를 현재 주행 상태로 저장
-  // *
-  // * 제어명령 60번의 ICD 정의:
-  // * 0 = 전진
-  // * 1 = 후진
-  // * 2 = 정지
-  // *
-  // * 이 상태값은 Node_1이 다시 송신하지 않는다.
-  // * 전방 또는 후방 초음파 Event의 송신 여부를
-  // * 결정하는 조건값으로만 사용한다.
-  // */
-  // switch (rxData[1])
-  // {
-  //   /*
-  //    * 전진 상태
-  //    */
-  //   case DRIVE_STATE_FORWARD:
-  //       g_drive_state = DRIVE_STATE_FORWARD;
-  //       break;
-
-
-  //   /*
-  //    * 후진 상태
-  //    */
-  //   case DRIVE_STATE_BACKWARD:
-  //       g_drive_state = DRIVE_STATE_BACKWARD;
-  //       break;
-
-
-  //   /*
-  //    * 정지 상태
-  //    */
-  //   case DRIVE_STATE_STOP:
-  //       g_drive_state = DRIVE_STATE_STOP;
-  //       break;
-
-
-  //   default:
-
-  //     /*
-  //      * 정의되지 않은 Value가 들어온 경우
-  //      * 잘못된 상태로 변경하지 않고
-  //      * 기존 주행 상태를 그대로 유지한다.
-  //      */
-  //     break;
-  // }
 }
 
 // ---------------- [Input Capture 인터럽트 콜백] ----------------[cite: 13]

@@ -47,23 +47,15 @@ typedef enum
 {
     CAN_CMD_NONE = 0,
 
-    CAN_CMD_TEMP_WARNING       = 110,
-    CAN_CMD_TEMP_NORMAL        = 111,
-
-    CAN_CMD_LIGHT_FAST_ON      = 112,
-    CAN_CMD_LIGHT_SMOOTH_ON    = 113,
-    CAN_CMD_LIGHT_OFF          = 114,
-
-    CAN_CMD_FRONT_WARNING_30CM = 115,
-    CAN_CMD_FRONT_WARNING_20CM = 116,
-    CAN_CMD_FRONT_WARNING_10CM = 117,
-
-    CAN_CMD_REAR_WARNING_30CM  = 118,
-    CAN_CMD_REAR_WARNING_20CM  = 119,
-    CAN_CMD_REAR_WARNING_10CM  = 120,
-
-    CAN_CMD_FRONT_CLEAR        = 121,
-    CAN_CMD_REAR_CLEAR         = 122
+    /*
+     * ICD(9) 기준:
+     * 같은 기능의 세부 상태는 Command가 아니라
+     * Data[1]의 Value로 구분한다.
+     */
+    CAN_CMD_TEMP             = 110,
+    CAN_CMD_LIGHT            = 112,
+    CAN_CMD_FRONT_ULTRASONIC = 113,
+    CAN_CMD_REAR_ULTRASONIC  = 115
 
 } Node1CanCommand_t;
 
@@ -91,8 +83,10 @@ typedef struct
      * CAN Payload의 Data[0]에 저장할 제어 명령
      *
      * 예:
-     * 110 = 온도 경고
-     * 115 = 전방 30cm 경고
+     * 110 = 온도 상태
+     * 112 = 조도 상태
+     * 113 = 전방 초음파 상태
+     * 115 = 후방 초음파 상태
      */
     uint8_t command;
 
@@ -109,9 +103,9 @@ typedef struct
  */
 typedef enum
 {
-    LIGHT_LEVEL_DARK = 0,       // ADC 1000 이하
-    LIGHT_LEVEL_TRANSITION,     // ADC 1001 ~ 2499
-    LIGHT_LEVEL_BRIGHT          // ADC 2500 이상
+    LIGHT_LEVEL_DARK = 0,       // ADC 900 이하
+    LIGHT_LEVEL_TRANSITION,     // ADC 901 ~ 1699
+    LIGHT_LEVEL_BRIGHT          // ADC 1700 이상
 
 } LightLevel_t;
 
@@ -178,43 +172,31 @@ typedef struct
 /* USER CODE BEGIN PD */
 
 /*
- * TMP36 온도 경고 기준값
+ * TMP36 온도 상태 전환 기준
  *
- * 테스트 단계:
- * 37도 이상 → 온도 경고 명령 110
+ * 경고 기준:
+ * TEMP_WARNING_THRESHOLD 이상
  *
- * 최종 동작:
- * 50도 이상 → 온도 경고 명령 110
+ * 정상 복귀 기준:
+ * TEMP_NORMAL_THRESHOLD 이하
  *
- * 경고 해제:
- * 30도 이하 → 정상 복귀 명령 111
+ * CAN 전송:
+ * Command 110, Value 1 = 경고
+ * Command 110, Value 0 = 정상
  */
-#define TEMP_WARNING_THRESHOLD_TEST       37.0f
-#define TEMP_WARNING_THRESHOLD_FINAL      50.0f
-#define TEMP_NORMAL_THRESHOLD             30.0f
-
-
-/*
- * 현재는 손으로 센서를 가열하여 동작을 확인해야 하므로
- * 테스트 기준값 37도를 사용한다.
- *
- * 최종 테스트가 끝난 뒤 아래 값을
- * TEMP_WARNING_THRESHOLD_FINAL로 변경한다.
- */
-#define TEMP_WARNING_THRESHOLD \
-        TEMP_WARNING_THRESHOLD_TEST
-        // TEMP_WARNING_THRESHOLD_FINAL
+#define TEMP_WARNING_THRESHOLD     35.0f
+#define TEMP_NORMAL_THRESHOLD      30.0f
 
 
 /*
  * 조도센서 ADC 기준값
  *
  * 실제 측정 결과:
- * 밝은 환경: 약 2500 이상
+ * 밝은 환경: 약 2000 이상
  * 어두운 환경: 약 1000 이하
  */
-#define LIGHT_BRIGHT_THRESHOLD           2500U
-#define LIGHT_DARK_THRESHOLD             1000U
+#define LIGHT_BRIGHT_THRESHOLD           1700U
+#define LIGHT_DARK_THRESHOLD             900U
 
 
 /*
@@ -226,7 +208,7 @@ typedef struct
  * 양수: ADC값 감소, 즉 어두워짐
  * 음수: ADC값 증가, 즉 밝아짐
  */
-#define LIGHT_RAW_RAPID_DROP             1200
+#define LIGHT_RAW_RAPID_DROP             800
 
 
 /*
@@ -294,18 +276,6 @@ typedef struct
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
-
-/*
- * CAN 테스트 송신 디버깅 변수
- */
-volatile uint32_t g_can_test_tx_count = 0U;
-volatile uint32_t g_can_test_tx_fail_count = 0U;
-volatile uint32_t g_can_test_tx_no_mailbox_count = 0U;
-
-volatile uint32_t g_can_test_tx_last_status = 0U;
-volatile uint32_t g_can_test_tx_last_mailbox = 0U;
-volatile uint32_t g_can_test_tx_free_level = 0U;
-
 
 /*
  * main.c에 선언된 거리 변수 및 us delay 함수 참조
@@ -569,8 +539,7 @@ void StartTaskTP(void const * argument)
        * 현재 ADC값 20%
        * 이전 필터값 80%
        */
-      g_auto_light.tp.filtered_raw =
-          (uint16_t)((0.2f * (float)raw_tp) + (0.8f * (float)g_auto_light.tp.filtered_raw));
+      g_auto_light.tp.filtered_raw = (uint16_t)((0.2f * (float)raw_tp) + (0.8f * (float)g_auto_light.tp.filtered_raw));
     }
 
 
@@ -601,11 +570,11 @@ void StartTaskTP(void const * argument)
      *
      * 정상 상태에서 설정 기준 이상이 되면 경고 상태로 전환한다.
      *
-     * 현재 테스트 기준:
-     * 37℃ 이상 → 경고
+     * TEMP_WARNING_THRESHOLD 이상이면
+     * 온도 경고 상태로 전환한다.
      *
-     * 최종 기준:
-     * 50℃ 이상 → 경고
+     * 현재 설정값:
+     * 35℃ 이상 → 경고
      */
     if ((current_temperature_state == TEMP_STATE_NORMAL) && (g_auto_light.tp.temperature >= TEMP_WARNING_THRESHOLD))
     {
@@ -677,7 +646,7 @@ void StartTaskTP(void const * argument)
           * 최종 Payload:
           * [6E 01 00 00 00 00 00 00]
           */
-          temperature_message.command = (uint8_t)CAN_CMD_TEMP_WARNING;
+          temperature_message.command = (uint8_t)CAN_CMD_TEMP;
 
           temperature_message.value = 1U;
           break;
@@ -689,13 +658,13 @@ void StartTaskTP(void const * argument)
           /*
           * 온도 정상 복귀 Event
           *
-          * Command = 111
+          * Command = 110
           * Value   = 0
           *
           * 최종 Payload:
-          * [6F 00 00 00 00 00 00 00]
+          * [6E 00 00 00 00 00 00 00]
           */
-          temperature_message.command = (uint8_t)CAN_CMD_TEMP_NORMAL;
+          temperature_message.command = (uint8_t)CAN_CMD_TEMP;
 
           temperature_message.value = 0U;
           break;
@@ -971,11 +940,10 @@ void StartTaskHC1(void const * argument)
           /*
            * 전방 10cm 경고
            *
-           * Command = 117
+           * Command = 113
            * Value   = 3
            */
-          front_message.command = (uint8_t)CAN_CMD_FRONT_WARNING_10CM;
-
+          front_message.command = (uint8_t)CAN_CMD_FRONT_ULTRASONIC;
           front_message.value = 3U;
           break;
 
@@ -985,11 +953,10 @@ void StartTaskHC1(void const * argument)
           /*
            * 전방 20cm 경고
            *
-           * Command = 116
+           * Command = 113
            * Value   = 2
            */
-          front_message.command = (uint8_t)CAN_CMD_FRONT_WARNING_20CM;
-
+          front_message.command = (uint8_t)CAN_CMD_FRONT_ULTRASONIC;
           front_message.value = 2U;
           break;
 
@@ -999,11 +966,10 @@ void StartTaskHC1(void const * argument)
           /*
            * 전방 30cm 경고
            *
-           * Command = 115
+           * Command = 113
            * Value   = 1
            */
-          front_message.command = (uint8_t)CAN_CMD_FRONT_WARNING_30CM;
-
+          front_message.command = (uint8_t)CAN_CMD_FRONT_ULTRASONIC;
           front_message.value = 1U;
           break;
 
@@ -1014,11 +980,10 @@ void StartTaskHC1(void const * argument)
           /*
            * 전방 경고 해제
            *
-           * Command = 121
+           * Command = 113
            * Value   = 0
            */
-          front_message.command = (uint8_t)CAN_CMD_FRONT_CLEAR;
-
+          front_message.command = (uint8_t)CAN_CMD_FRONT_ULTRASONIC;
           front_message.value = 0U;
           break;
       }
@@ -1303,11 +1268,10 @@ void StartTaskHC2(void const * argument)
           /*
            * 후방 10cm 경고
            *
-           * Command = 120
+           * Command = 115
            * Value   = 3
            */
-          rear_message.command = (uint8_t)CAN_CMD_REAR_WARNING_10CM;
-
+          rear_message.command = (uint8_t)CAN_CMD_REAR_ULTRASONIC;
           rear_message.value = 3U;
           break;
 
@@ -1317,11 +1281,10 @@ void StartTaskHC2(void const * argument)
           /*
            * 후방 20cm 경고
            *
-           * Command = 119
+           * Command = 115
            * Value   = 2
            */
-          rear_message.command = (uint8_t)CAN_CMD_REAR_WARNING_20CM;
-
+          rear_message.command = (uint8_t)CAN_CMD_REAR_ULTRASONIC;
           rear_message.value = 2U;
           break;
 
@@ -1331,11 +1294,10 @@ void StartTaskHC2(void const * argument)
           /*
            * 후방 30cm 경고
            *
-           * Command = 118
+           * Command = 115
            * Value   = 1
            */
-          rear_message.command = (uint8_t)CAN_CMD_REAR_WARNING_30CM;
-
+          rear_message.command = (uint8_t)CAN_CMD_REAR_ULTRASONIC;
           rear_message.value = 1U;
           break;
 
@@ -1346,11 +1308,10 @@ void StartTaskHC2(void const * argument)
           /*
            * 후방 경고 해제
            *
-           * Command = 122
+           * Command = 115
            * Value   = 0
            */
-          rear_message.command = (uint8_t)CAN_CMD_REAR_CLEAR;
-
+          rear_message.command = (uint8_t)CAN_CMD_REAR_ULTRASONIC;
           rear_message.value = 0U;
           break;
       }
@@ -1533,9 +1494,9 @@ void StartTaskLD(void const * argument)
      * 9-1. 터널 진입 판단
      *
      * 조건:
-     * - 전방 raw 값이 1000 이하
-     * - 상공 raw 값이 2500 이상
-     * - 전방 raw 값이 한 주기 동안 1200 이상 급격히 감소
+     * - 전방 raw 값이 900 이하
+     * - 상공 raw 값이 1700 이상
+     * - 전방 raw 값이 한 주기 동안 800 이상 급격히 감소
      *
      * 결과:
      * - 빠른 라이트 점등
@@ -1554,14 +1515,14 @@ void StartTaskLD(void const * argument)
      * 9-2. 일몰 또는 야간 진입 판단
      *
      * 조건 1:
-     * - 전방과 상공 센서 모두 1000 이하
+     * - 전방과 상공 센서 모두 900 이하
      *
      * 또는 조건 2:
      * - 전방과 상공 필터값이 함께 감소
      *
      * 결과:
      * - 자연스러운 라이트 점등
-     * - CAN 명령 113
+     * - CAN 명령 112
      */
     else if (((forward_level == LIGHT_LEVEL_DARK) && (overhead_level == LIGHT_LEVEL_DARK)) || ((g_auto_light.forward.delta >= LIGHT_FILTERED_DROP) && (g_auto_light.overhead.delta >= LIGHT_FILTERED_DROP)))
     {
@@ -1607,7 +1568,7 @@ void StartTaskLD(void const * argument)
     /*
      * 9-4. 밝은 환경 복귀 판단
      *
-     * 전방과 상공 센서 모두 2500 이상인 상태가
+     * 전방과 상공 센서 모두 1700 이상인 상태가
      * 약 500ms 지속되면 라이트를 해제한다.
      */
     else if ((forward_level == LIGHT_LEVEL_BRIGHT) && (overhead_level == LIGHT_LEVEL_BRIGHT))
@@ -1630,7 +1591,7 @@ void StartTaskLD(void const * argument)
     /*
      * 9-5. 전환 구간
      *
-     * ADC 1001~2899 범위에서는
+     * ADC 901~1699 범위에서는
      * 현재 라이트 상태를 그대로 유지한다.
      */
     else
@@ -1693,7 +1654,7 @@ void StartTaskLD(void const * argument)
           * 최종 Payload:
           * [70 02 00 00 00 00 00 00]
           */
-          light_message.command = (uint8_t)CAN_CMD_LIGHT_FAST_ON;
+          light_message.command = (uint8_t)CAN_CMD_LIGHT;
 
           light_message.value = 2U;
           break;
@@ -1706,13 +1667,13 @@ void StartTaskLD(void const * argument)
           *
           * 일몰 또는 야간 진입 시 사용한다.
           *
-          * Command = 113
+          * Command = 112
           * Value   = 1
           *
           * 최종 Payload:
-          * [71 01 00 00 00 00 00 00]
+          * [70 01 00 00 00 00 00 00]
           */
-          light_message.command = (uint8_t)CAN_CMD_LIGHT_SMOOTH_ON;
+          light_message.command = (uint8_t)CAN_CMD_LIGHT;
 
           light_message.value = 1U;
           break;
@@ -1726,13 +1687,13 @@ void StartTaskLD(void const * argument)
           *
           * 밝은 환경으로 복귀했을 때 사용한다.
           *
-          * Command = 114
+          * Command = 112
           * Value   = 0
           *
           * 최종 Payload:
-          * [72 00 00 00 00 00 00 00]
+          * [70 00 00 00 00 00 00 00]
           */
-          light_message.command = (uint8_t)CAN_CMD_LIGHT_OFF;
+          light_message.command = (uint8_t)CAN_CMD_LIGHT;
 
           light_message.value = 0U;
           break;
@@ -1790,56 +1751,40 @@ void StartTaskCAN(void const * argument)
 
 
   /*
-   * 센서 Task들이 Queue에 등록한 메시지를
-   * 테스트 중 임시로 꺼내 버리기 위한 변수
-   *
-   * 이를 하지 않으면 Queue가 가득 차서
-   * 센서 Task가 xQueueSend에서 Block될 수 있다.
+   * 센서 Task에서 전달한 CAN 송신 요청
    */
-  CanTxMessage_t discarded_message;
+  CanTxMessage_t tx_message;
 
 
   /*
-   * CAN 테스트 송신 Header
+   * CAN 송신 Header
    */
   CAN_TxHeaderTypeDef txHeader = {0, };
 
 
   /*
-   * HAL_CAN_AddTxMessage 결과 Mailbox
+   * 송신 Mailbox 번호
    */
   uint32_t txMailbox = 0U;
 
 
   /*
-   * 테스트 데이터
+   * 실제 CAN Payload
    *
-   * 팀원 코드의 데이터 배치와 동일:
-   *
-   * Data[0~1] = vehicle_speed, Big Endian
-   * Data[2~3] = engine_rpm, Big Endian
-   * Data[4]   = temperature
-   * Data[5~7] = 0
-   *
-   * vehicle_speed = 100
-   * engine_rpm    = 2000
-   * temperature   = 25
+   * Data[0] = Command
+   * Data[1] = Value
+   * Data[2~7] = 0
    */
   uint8_t txData[8] =
   {
-    10U, 0x10U,   /* Speed = 100 */
-    0xAA, 0xBB,   /* RPM = 2000 */
-    0xCC,          /* Temperature = 25 */
-    0x00U,
-    0x00U,
-    0x00U
+    0U, 0U, 0U, 0U,
+    0U, 0U, 0U, 0U
   };
 
 
   /*
-   * Node_1 테스트 송신 Header
+   * 공통 CAN Header 설정
    */
-  txHeader.StdId = CAN_TEST_NODE1_TX_ID;
   txHeader.ExtId = 0U;
   txHeader.IDE = CAN_ID_STD;
   txHeader.RTR = CAN_RTR_DATA;
@@ -1850,273 +1795,93 @@ void StartTaskCAN(void const * argument)
   for (;;)
   {
     /*
-     * 테스트 중 센서 Event Queue를 비운다.
-     *
-     * 센서 Task와 ADC/DMA는 계속 동작하지만
-     * 센서 Event는 실제 CAN으로 보내지 않는다.
+     * 센서 Event가 들어올 때까지 대기한다.
      */
-    while (xQueueReceive(QueueCANHandle, &discarded_message, 0U) == pdPASS)
+    if (xQueueReceive(QueueCANHandle, &tx_message, portMAX_DELAY) != pdPASS)
     {
-      /*
-       * 테스트 기간에는 센서 메시지를 사용하지 않는다.
-       */
+      continue;
     }
 
 
     /*
-     * 현재 Mailbox 여유 개수 저장
+     * Standard ID 유효 범위 확인
      */
-    g_can_test_tx_free_level = HAL_CAN_GetTxMailboxesFreeLevel(&hcan);
-
-
-    if (g_can_test_tx_free_level > 0U)
+    if (tx_message.destination_id > 0x7FFU)
     {
-      HAL_StatusTypeDef tx_status;
+      printf("[CAN TX ERROR] Invalid ID=0x%03X\r\n", (unsigned int)tx_message.destination_id);
+
+      continue;
+    }
 
 
-      /*
-       * Node_1 → Main 테스트 프레임 송신
-       */
-      // txData[2]++;
-      tx_status = HAL_CAN_AddTxMessage(&hcan, &txHeader, txData, &txMailbox);
+    /*
+     * 목적지 Node ID 설정
+     */
+    txHeader.StdId = tx_message.destination_id;
 
 
-      /*
-       * 디버거 확인용 최근 결과 저장
-       */
-      g_can_test_tx_last_status = (uint32_t)tx_status;
+    /*
+     * 이전 Payload 제거
+     */
+    txData[0] = 0U;
+    txData[1] = 0U;
+    txData[2] = 0U;
+    txData[3] = 0U;
+    txData[4] = 0U;
+    txData[5] = 0U;
+    txData[6] = 0U;
+    txData[7] = 0U;
 
-      g_can_test_tx_last_mailbox = txMailbox;
+
+    /*
+     * Command와 Value 패킹
+     */
+    txData[0] = tx_message.command;
+    txData[1] = tx_message.value;
 
 
-      if (tx_status == HAL_OK)
-      {
-        g_can_test_tx_count++;
-      }
-      else
-      {
-        g_can_test_tx_fail_count++;
-      }
+    /*
+     * 송신 Mailbox 대기
+     */
+    while (HAL_CAN_GetTxMailboxesFreeLevel(&hcan) == 0U)
+    {
+      osDelay(1);
+    }
+
+
+    /*
+     * 실제 CAN 송신
+     */
+    if (HAL_CAN_AddTxMessage(&hcan, &txHeader, txData, &txMailbox) == HAL_OK)
+    {
+      printf("[CAN TX] "
+             "ID=0x%03X CMD=%3u VALUE=%3u | "
+             "DATA=[%02X %02X %02X %02X "
+             "%02X %02X %02X %02X]\r\n",
+
+             (unsigned int)txHeader.StdId,
+             (unsigned int)txData[0],
+             (unsigned int)txData[1],
+
+             (unsigned int)txData[0],
+             (unsigned int)txData[1],
+             (unsigned int)txData[2],
+             (unsigned int)txData[3],
+             (unsigned int)txData[4],
+             (unsigned int)txData[5],
+             (unsigned int)txData[6],
+             (unsigned int)txData[7]);
     }
     else
     {
-      /*
-       * ACK를 받지 못하거나 CAN 연결에 문제가 있으면
-       * Mailbox가 계속 점유될 수 있다.
-       */
-      g_can_test_tx_no_mailbox_count++;
+      printf("[CAN TX FAIL] "
+             "ID=0x%03X CMD=%3u VALUE=%3u\r\n",
+
+             (unsigned int)txHeader.StdId,
+             (unsigned int)txData[0],
+             (unsigned int)txData[1]);
     }
-
-
-    /*
-     * 500ms마다 테스트 프레임 송신
-     */
-    osDelay(500);
   }
-
-
-
-
-
-  ///////////////////////////////////////////////
-
-  // /*
-  //  * 각 센서 Task가 QueueCAN에 등록한
-  //  * CAN 송신 요청을 저장할 구조체
-  //  *
-  //  * 포함 정보:
-  //  * - 수신 노드 ID
-  //  * - Command
-  //  * - Value
-  //  */
-  // CanTxMessage_t tx_message;
-
-
-  // /*
-  //  * STM32F103 bxCAN 송신 Header
-  //  *
-  //  * 현재 프로젝트는 FDCAN이 아니라
-  //  * Classic bxCAN을 사용한다.
-  //  */
-  // CAN_TxHeaderTypeDef txHeader = {0, };
-
-
-  // /*
-  //  * CAN 송신에 사용된 Mailbox 번호를 저장한다.
-  //  *
-  //  * STM32 bxCAN에는 송신 Mailbox가 3개 존재한다.
-  //  */
-  // uint32_t txMailbox = 0U;
-
-
-  // /*
-  //  * 실제 CAN으로 송신할 8바이트 Payload
-  //  *
-  //  * Data[0]   = Command
-  //  * Data[1]   = Value
-  //  * Data[2~7] = Padding
-  //  */
-  // uint8_t txData[8] = {0, };
-
-
-  // /*
-  //  * CAN Header의 공통 설정
-  //  *
-  //  * StdId는 수신 메시지마다 목적지가 다를 수 있으므로
-  //  * 큐에서 메시지를 꺼낸 뒤 설정한다.
-  //  */
-  // txHeader.IDE = CAN_ID_STD;           // Standard 11-bit Identifier
-  // txHeader.RTR = CAN_RTR_DATA;         // Data Frame
-  // txHeader.DLC = 8U;                   // Payload 8 Bytes
-  // txHeader.TransmitGlobalTime = DISABLE;
-
-
-  // for (;;)
-  // {
-  //   /*
-  //    * 1. QueueCAN에서 CAN 송신 요청을 기다린다.
-  //    *
-  //    * portMAX_DELAY:
-  //    * 큐에 메시지가 들어올 때까지 TaskCAN을 Block 상태로 둔다.
-  //    *
-  //    * 따라서 기존처럼 500ms마다 전역 변수를 확인하지 않고,
-  //    * Event가 발생했을 때 즉시 TaskCAN이 깨어난다.
-  //    */
-  //   if (xQueueReceive(QueueCANHandle, &tx_message, portMAX_DELAY) != pdPASS)
-  //   {
-  //     /*
-  //      * 정상적으로는 portMAX_DELAY를 사용하므로
-  //      * 이 조건에 들어오지 않는다.
-  //      */
-  //     continue;
-  //   }
-
-
-  //   /*
-  //    * 2. 수신 노드 ID 유효성 확인
-  //    *
-  //    * Standard CAN Identifier는 11비트이므로
-  //    * 사용할 수 있는 범위는 0x000~0x7FF이다.
-  //    */
-  //   if (tx_message.destination_id > 0x7FFU)
-  //   {
-  //     /*
-  //      * 잘못된 Identifier는 CAN으로 송신하지 않는다.
-  //      *
-  //      * UART 출력은 TaskCAN에서만 수행한다.
-  //      */
-  //     printf("[CAN TX ERROR] Invalid ID=0x%03X\r\n", (unsigned int)tx_message.destination_id);
-
-  //     continue;
-  //   }
-
-
-  //   /*
-  //    * 3. CAN Header의 Identifier 설정
-  //    *
-  //    * 현재 통신 규칙:
-  //    * Identifier = 수신 노드 ID
-  //    *
-  //    * 예:
-  //    * Node_2 대상 메시지 → StdId = 0x003
-  //    */
-  //   txHeader.StdId = tx_message.destination_id;
-
-
-  //   /*
-  //    * 4. Payload 초기화
-  //    *
-  //    * 이전 송신 데이터가 남지 않도록
-  //    * 모든 바이트를 0으로 초기화한다.
-  //    */
-  //   txData[0] = 0U;
-  //   txData[1] = 0U;
-  //   txData[2] = 0U;
-  //   txData[3] = 0U;
-  //   txData[4] = 0U;
-  //   txData[5] = 0U;
-  //   txData[6] = 0U;
-  //   txData[7] = 0U;
-
-
-  //   /*
-  //    * 5. Payload 패킹
-  //    *
-  //    * 확정된 데이터 구조:
-  //    *
-  //    * Data[0]   = Command
-  //    * Data[1]   = Value
-  //    * Data[2~7] = Padding 0
-  //    */
-  //   txData[0] = tx_message.command;
-
-  //   txData[1] = tx_message.value;
-
-
-  //   /*
-  //    * 6. 사용할 수 있는 CAN 송신 Mailbox가 생길 때까지 대기
-  //    *
-  //    * TaskCAN만 CAN 송신을 담당하지만,
-  //    * 이전 메시지가 아직 Mailbox에 남아 있을 수 있으므로
-  //    * 여유 Mailbox가 있는지 확인한다.
-  //    */
-  //   while (HAL_CAN_GetTxMailboxesFreeLevel(&hcan) == 0U)
-  //   {
-  //     /*
-  //      * 다른 Task가 실행될 수 있도록
-  //      * 1ms 동안 Block 상태로 전환한다.
-  //      */
-  //     osDelay(1);
-  //   }
-
-
-  //   /*
-  //    * 7. 실제 CAN 메시지 송신 요청
-  //    *
-  //    * 이 함수는 메시지를 bxCAN 송신 Mailbox에 등록한다.
-  //    */
-  //   if (HAL_CAN_AddTxMessage(&hcan, &txHeader, txData, &txMailbox) == HAL_OK)
-  //   {
-  //     /*
-  //      * CAN 송신 요청 성공 확인
-  //      *
-  //      * 모든 UART 확인 출력은 TaskCAN에서만 수행한다.
-  //      */
-  //     printf("[CAN TX] "
-  //            "ID=0x%03X CMD=%3u VALUE=%3u | "
-  //            "DATA=[%02X %02X %02X %02X "
-  //            "%02X %02X %02X %02X]\r\n",
-
-  //            (unsigned int)txHeader.StdId,
-  //            (unsigned int)txData[0],
-  //            (unsigned int)txData[1],
-
-  //            (unsigned int)txData[0],
-  //            (unsigned int)txData[1],
-  //            (unsigned int)txData[2],
-  //            (unsigned int)txData[3],
-  //            (unsigned int)txData[4],
-  //            (unsigned int)txData[5],
-  //            (unsigned int)txData[6],
-  //            (unsigned int)txData[7]);
-  //   }
-  //   else
-  //   {
-  //     /*
-  //      * CAN Mailbox 등록 실패
-  //      *
-  //      * 현재 단계에서는 실패 사실을 UART로 확인한다.
-  //      * 센서 Task에서는 CAN 오류를 처리하지 않는다.
-  //      */
-  //     printf("[CAN TX FAIL] "
-  //            "ID=0x%03X CMD=%3u VALUE=%3u\r\n",
-
-  //            (unsigned int)txHeader.StdId,
-  //            (unsigned int)txData[0],
-  //            (unsigned int)txData[1]);
-  //   }
-  // }
-
 
 
   /* USER CODE END StartTaskCAN */
