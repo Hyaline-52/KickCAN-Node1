@@ -69,16 +69,37 @@
 
 /* USER CODE BEGIN PV */
 
+/*
+ * 전방 초음파 측정 변수
+ */
+volatile uint32_t IC_Value1_Front = 0U;
+volatile uint8_t Is_First_Captured1 = 0U;
+volatile uint16_t Distance_Front = 0U;
 
-// 전방 센서(HC01) 변수 (Echo: PA6 - TIM3_CH1)[cite: 13]
-volatile uint32_t IC_Value1_Front = 0;
-volatile uint8_t Is_First_Captured1 = 0;
-volatile uint16_t Distance_Front = 0;
+/*
+ * 이번 전방 측정의 Echo가 정상적으로 완료되었는지 표시한다.
+ *
+ * 0: 아직 완료되지 않음 또는 타임아웃
+ * 1: Rising/Falling Edge 측정 완료
+ */
+volatile uint8_t Front_Echo_Completed = 0U;
 
-// 후방 센서(HC02) 변수 (Echo: PA7 - TIM3_CH2)[cite: 13]
-volatile uint32_t IC_Value1_Back = 0;
-volatile uint8_t Is_First_Captured2 = 0;
-volatile uint16_t Distance_Back = 0;
+
+/*
+ * 후방 초음파 측정 변수
+ */
+volatile uint32_t IC_Value1_Back = 0U;
+volatile uint8_t Is_First_Captured2 = 0U;
+volatile uint16_t Distance_Back = 0U;
+
+/*
+ * 이번 후방 측정의 Echo가 정상적으로 완료되었는지 표시한다.
+ *
+ * 0: 아직 완료되지 않음 또는 타임아웃
+ * 1: Rising/Falling Edge 측정 완료
+ */
+volatile uint8_t Rear_Echo_Completed = 0U;
+
 
 // freertos.c에 선언된 3채널 ADC 버퍼 참조[cite: 4, 10]
 extern volatile uint16_t adc_dma_buff[3];
@@ -392,6 +413,12 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
         IC_Value1_Front = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_1);
         Distance_Front = IC_Value1_Front / 58;
 
+        /*
+        * Rising/Falling Edge 측정이 모두 끝났으므로
+        * 이번 전방 측정 완료 표시
+        */
+        Front_Echo_Completed = 1U;
+
         Is_First_Captured1 = 0;
         __HAL_TIM_SET_CAPTUREPOLARITY(htim, TIM_CHANNEL_1, TIM_INPUTCHANNELPOLARITY_RISING);
       }
@@ -410,6 +437,12 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
       {
         IC_Value1_Back = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_2);
         Distance_Back = IC_Value1_Back / 58;
+
+        /*
+        * Rising/Falling Edge 측정이 모두 끝났으므로
+        * 이번 후방 측정 완료 표시
+        */
+        Rear_Echo_Completed = 1U;
 
         Is_First_Captured2 = 0;
         __HAL_TIM_SET_CAPTUREPOLARITY(htim, TIM_CHANNEL_2, TIM_INPUTCHANNELPOLARITY_RISING);

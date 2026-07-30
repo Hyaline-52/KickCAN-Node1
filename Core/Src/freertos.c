@@ -195,8 +195,8 @@ typedef struct
  * 밝은 환경: 약 2000 이상
  * 어두운 환경: 약 1000 이하
  */
-#define LIGHT_BRIGHT_THRESHOLD           2000U
-#define LIGHT_DARK_THRESHOLD             1400U
+#define LIGHT_BRIGHT_THRESHOLD           2500U
+#define LIGHT_DARK_THRESHOLD             1800U
 
 
 /*
@@ -282,6 +282,13 @@ typedef struct
  */
 extern volatile uint16_t Distance_Front;
 extern volatile uint16_t Distance_Back;
+
+/*
+ * main.c의 초음파 측정 완료 플래그
+ */
+extern volatile uint8_t Front_Echo_Completed;
+extern volatile uint8_t Rear_Echo_Completed;
+
 extern void delay_us(uint16_t us);
 
 
@@ -762,27 +769,62 @@ void StartTaskHC1(void const * argument)
   for (;;)
   {
     /*
-     * 1. 전방 초음파 Trig 신호 발생
-     *
-     * PC0:
-     * 전방 HC-SR04의 Trig 출력
-     */
+    * 1. 이번 전방 측정 준비
+    *
+    * 이전 측정 완료 상태를 지우고
+    * 새 Trig에 대한 Echo 완료를 기다린다.
+    */
+    Front_Echo_Completed = 0U;
+
+
+    /*
+    * 전방 초음파 Trig 발생
+    */
     HAL_GPIO_WritePin(GPIOC, PC0_A5_HCTr1_Pin, GPIO_PIN_RESET);
 
-    delay_us(2);
+    delay_us(2U);
 
     HAL_GPIO_WritePin(GPIOC, PC0_A5_HCTr1_Pin, GPIO_PIN_SET);
 
-    delay_us(10);
+    delay_us(10U);
 
     HAL_GPIO_WritePin(GPIOC, PC0_A5_HCTr1_Pin, GPIO_PIN_RESET);
 
 
     /*
-     * 2. Echo 인터럽트에서 계산된
-     *    전방 거리값을 읽는다.
-     */
-    uint16_t front_distance = Distance_Front;
+    * 2. 이번 전방 Echo 완료 대기
+    *
+    * 최대 30ms 동안 기다린다.
+    * 약 4m 정도의 Echo 왕복 시간까지 포함하는 범위다.
+    */
+    uint32_t front_wait_start = HAL_GetTick();
+
+    while ((Front_Echo_Completed == 0U) && ((HAL_GetTick() - front_wait_start) < 30U))
+    {
+      osDelay(1U);
+    }
+
+
+    /*
+    * 이번 측정 결과
+    *
+    * Echo 완료:
+    * 인터럽트에서 계산된 거리 사용
+    *
+    * Echo 없음:
+    * 장애물이 측정 범위 밖에 있다고 보고
+    * CLEAR 판단용 값 0 사용
+    */
+    uint16_t front_distance;
+
+    if (Front_Echo_Completed == 1U)
+    {
+      front_distance = Distance_Front;
+    }
+    else
+    {
+      front_distance = 0U;
+    }
 
 
     /*
@@ -795,32 +837,17 @@ void StartTaskHC1(void const * argument)
     DriveState_t current_drive_state = g_drive_state;
 
 
+
     /*
-     * 4. 전방 거리값의 유효 범위를 확인한다.
-     *
-     * 0cm:
-     * 아직 측정되지 않았거나 Echo 측정 실패
-     *
-     * 400cm 초과:
-     * HC-SR04의 일반적인 측정 범위를 벗어난 값
-     *
-     * 유효하지 않은 경우:
-     * - 기존 거리 상태 유지
-     * - 초음파 Event 생성 안 함
-     * - 이전 주행 상태도 갱신하지 않음
-     *
-     * 이전 주행 상태를 갱신하지 않는 이유:
-     * 전진 상태로 변경된 순간 거리 측정이 실패하더라도,
-     * 다음 유효 거리 측정 시 현재 전방 Event를
-     * 한 번 송신하기 위해서다.
-     */
+    * Echo가 없거나 측정 범위를 벗어난 경우
+    * 장애물이 멀리 있다고 보고 CLEAR 처리
+    */
     if ((front_distance < ULTRASONIC_MIN_VALID_CM) || (front_distance > ULTRASONIC_MAX_VALID_CM))
     {
-      osDelay(120);
-      continue;
+      current_front_state = ULTRASONIC_STATE_CLEAR;
     }
-
-
+    else
+    { 
     /*
      * 5. 현재 거리값을 전방 경고 단계로 변환한다.
      *
@@ -830,7 +857,7 @@ void StartTaskHC1(void const * argument)
      * 10CM  : 1~10cm
      */
     current_front_state = GetUltrasonicState(front_distance);
-
+    }
 
     /*
      * 이번 측정에서 전방 거리 단계가
@@ -1088,28 +1115,55 @@ void StartTaskHC2(void const * argument)
 
   for (;;)
   {
+    
     /*
-     * 1. 후방 초음파 Trig 신호 발생
-     *
-     * PC1:
-     * 후방 HC-SR04의 Trig 출력
-     */
+    * 1. 이번 후방 측정 준비
+    */
+    Rear_Echo_Completed = 0U;
+
+
+    /*
+    * 후방 초음파 Trig 발생
+    */
     HAL_GPIO_WritePin(GPIOC, PC1_A4_HCTr2_Pin, GPIO_PIN_RESET);
 
-    delay_us(2);
+    delay_us(2U);
 
     HAL_GPIO_WritePin(GPIOC, PC1_A4_HCTr2_Pin, GPIO_PIN_SET);
 
-    delay_us(10);
+    delay_us(10U);
 
     HAL_GPIO_WritePin(GPIOC, PC1_A4_HCTr2_Pin, GPIO_PIN_RESET);
 
 
     /*
-     * 2. Echo 인터럽트에서 계산된
-     *    후방 거리값을 읽는다.
-     */
-    uint16_t rear_distance = Distance_Back;
+    * 2. 이번 후방 Echo 완료 대기
+    */
+    uint32_t rear_wait_start = HAL_GetTick();
+
+    while ((Rear_Echo_Completed == 0U) && ((HAL_GetTick() - rear_wait_start) < 30U))
+    {
+      osDelay(1U);
+    }
+
+
+    /*
+    * 이번 후방 측정 결과
+    */
+    uint16_t rear_distance;
+
+    if (Rear_Echo_Completed == 1U)
+    {
+      rear_distance = Distance_Back;
+    }
+    else
+    {
+      /*
+      * Echo 없음:
+      * 장애물이 측정 범위 밖에 있다고 보고 CLEAR 처리
+      */
+      rear_distance = 0U;
+    }
 
 
     /*
@@ -1143,21 +1197,12 @@ void StartTaskHC2(void const * argument)
      */
     if ((rear_distance < ULTRASONIC_MIN_VALID_CM) || (rear_distance > ULTRASONIC_MAX_VALID_CM))
     {
-      osDelay(120);
-      continue;
+      current_rear_state = ULTRASONIC_STATE_CLEAR;
     }
-
-
-    /*
-     * 5. 현재 거리값을 후방 경고 단계로 변환한다.
-     *
-     * CLEAR : 30cm 초과
-     * 30CM  : 21~30cm
-     * 20CM  : 11~20cm
-     * 10CM  : 1~10cm
-     */
+    else
+    {
     current_rear_state = GetUltrasonicState(rear_distance);
-
+    }
 
     /*
      * 이번 측정에서 후방 거리 단계가
@@ -1798,6 +1843,23 @@ void StartTaskCAN(void const * argument)
      * 센서 Event가 들어올 때까지 대기한다.
      */
     if (xQueueReceive(QueueCANHandle, &tx_message, portMAX_DELAY) != pdPASS)
+    {
+      continue;
+    }
+
+    /*
+    * Queue에서 메시지를 꺼낸 시점에
+    * 현재 주행 방향과 맞지 않는 초음파 메시지는 폐기한다.
+    *
+    * xQueueReceive가 성공했으므로
+    * 해당 메시지는 이미 Queue에서 제거된 상태다.
+    */
+    if ((tx_message.command == (uint8_t)CAN_CMD_FRONT_ULTRASONIC) && (g_drive_state != DRIVE_STATE_FORWARD))
+    {
+      continue;
+    }
+
+    if ((tx_message.command == (uint8_t)CAN_CMD_REAR_ULTRASONIC) && (g_drive_state != DRIVE_STATE_BACKWARD))
     {
       continue;
     }
