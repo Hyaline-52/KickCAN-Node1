@@ -184,8 +184,8 @@ typedef struct
  * Command 110, Value 1 = 경고
  * Command 110, Value 0 = 정상
  */
-#define TEMP_WARNING_THRESHOLD     35.0f
-#define TEMP_NORMAL_THRESHOLD      30.0f
+#define TEMP_WARNING_THRESHOLD     30.0f
+#define TEMP_NORMAL_THRESHOLD      25.0f
 
 
 /*
@@ -208,7 +208,7 @@ typedef struct
  * 양수: ADC값 감소, 즉 어두워짐
  * 음수: ADC값 증가, 즉 밝아짐
  */
-#define LIGHT_RAW_RAPID_DROP             800
+#define LIGHT_RAW_RAPID_DROP             400
 
 
 /*
